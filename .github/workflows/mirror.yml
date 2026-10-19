@@ -1,0 +1,20 @@
+name: Mirror
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  delete:
+  schedule:
+    - cron: '42 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    uses: Holo-Org/.github/.github/workflows/mirror.yml@main
+    with:
+      destination: ${{ vars.MIRROR_URL }}
+    secrets: inherit
