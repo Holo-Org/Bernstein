@@ -4,6 +4,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/poll-application"
 SERVICES=(poll worker result)
 
+# Local settings (ACR_NAME, POSTGRES_PASSWORD...), never committed: see .env.example.
+# Variables already set in the environment take precedence over the file.
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ && -z "${!key:-}" ]] && export "$key=$value"
+  done < "$ROOT_DIR/.env"
+fi
+
+# Without ACR_NAME, use the registry of the subscription if there is exactly one.
+resolve_acr_name() {
+  [[ -n "${ACR_NAME:-}" ]] && return
+  local registries
+  mapfile -t registries < <(az acr list --query "[].name" -o tsv)
+  if [[ ${#registries[@]} -ne 1 ]]; then
+    echo "error: ACR_NAME is not set and the subscription has ${#registries[@]} registries (see README.md)" >&2
+    exit 1
+  fi
+  ACR_NAME="${registries[0]}"
+  echo "==> Using registry $ACR_NAME"
+}
+
 require_env() {
   local name
   for name in "$@"; do

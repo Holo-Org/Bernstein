@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Build the application images and push them to the private Azure Container Registry.
 #
-# Usage: ACR_NAME=<registry> scripts/build-push.sh [service...]
+# Usage: scripts/build-push.sh [service...]
 #   service: poll, worker and/or result (default: all of them)
 #
+# The registry is ACR_NAME (environment or .env), or the only registry of the subscription.
 # An image whose tag already exists in the registry is not rebuilt (set FORCE=1 to override).
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-require_env ACR_NAME
+resolve_acr_name
 
 services=("$@")
 [[ ${#services[@]} -eq 0 ]] && services=("${SERVICES[@]}")
