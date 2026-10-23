@@ -7,7 +7,9 @@ SERVICES=(poll worker result)
 # Local settings (ACR_NAME, POSTGRES_PASSWORD...), never committed: see .env.example.
 # Variables already set in the environment take precedence over the file.
 if [[ -f "$ROOT_DIR/.env" ]]; then
-  while IFS='=' read -r key value; do
+  # `|| [[ -n $key ]]` keeps a last line that has no trailing newline.
+  while IFS='=' read -r key value || [[ -n "$key" ]]; do
+    value="${value%\"}" value="${value#\"}"
     [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ && -z "${!key:-}" ]] && export "$key=$value"
   done < "$ROOT_DIR/.env"
 fi
