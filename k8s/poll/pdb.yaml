@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: poll
+spec:
+  # A `kubectl drain` may only evict a poll pod while another one stays available.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: poll

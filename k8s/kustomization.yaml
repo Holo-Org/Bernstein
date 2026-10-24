@@ -10,3 +10,4 @@ labels:
 resources:
   - namespace.yaml
   - redis
+  - poll
