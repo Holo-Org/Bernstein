@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  # A single instance: PostgreSQL has no built-in multi-writer replication, and two pods on the
+  # same volume would corrupt it. An update briefly stops the database (stop, then start):
+  # the worker keeps the votes in Redis meanwhile and result reconnects.
+  replicas: 1
+  updateStrategy:
+    type: RollingUpdate
+  # The votes must survive the deletion (or scale down) of the StatefulSet: keep the volume.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # `postgres` user of the image
+        runAsGroup: 999
+        fsGroup: 999 # makes the volume writable by this user
+        seccompProfile:
+          type: RuntimeDefault
+      # Time for a clean shutdown (the image stops with SIGINT, a "fast" shutdown).
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:18
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: password
+          ports:
+            - name: postgres
+              containerPort: 5432
+          # Through TCP: during the first initialization, the image runs a temporary server
+          # that only listens on its Unix socket, and it must not be seen as ready.
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            periodSeconds: 5
+            failureThreshold: 30 # initdb or a crash recovery may take a while
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Since postgres:18, the volume is the parent directory: PGDATA is /var/lib/postgresql/18/docker.
+            - name: data
+              mountPath: /var/lib/postgresql
+            # Applied by the image entrypoint, only when the database is created.
+            - name: schema
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            # Unix socket and lock file: the only writes outside the volume.
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: schema
+          configMap:
+            name: postgres-schema
+        - name: run
+          emptyDir:
+            sizeLimit: 1Mi
+  # One disk per pod, from the default StorageClass of AKS (`default`, an Azure Standard SSD disk).
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

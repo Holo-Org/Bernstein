@@ -52,11 +52,12 @@ trap 'rm -rf "$overlay"' EXIT
 } > "$overlay/kustomization.yaml"
 
 echo "==> Applying the manifests"
-kubectl apply -k "$overlay"
+# k8s/postgres reads schema.sql from the application sources, outside the kustomization.
+kubectl kustomize --load-restrictor LoadRestrictionsNone "$overlay" | kubectl apply -f -
 
 echo "==> Waiting for the rollouts"
-for deployment in $(kubectl get deployments --namespace "$NAMESPACE" --output name); do
-  kubectl rollout status "$deployment" --namespace "$NAMESPACE" --timeout=5m
+for workload in $(kubectl get deployments,statefulsets --namespace "$NAMESPACE" --output name); do
+  kubectl rollout status "$workload" --namespace "$NAMESPACE" --timeout=5m
 done
 
 echo "==> External addresses"

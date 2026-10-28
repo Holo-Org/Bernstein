@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The `postgres` Secret (key `password`) is created by the deploy script from POSTGRES_PASSWORD.
+resources:
+  - statefulset.yaml
+  - service.yaml
+
+configMapGenerator:
+  # Connection settings shared by PostgreSQL, the worker and result (everything but the password).
+  # The name gets a content hash: changing a value rolls out the pods that use it.
+  - name: postgres
+    literals:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=poll
+      - POSTGRES_USER=poll
+  # Read from the application sources, not copied: the build needs `--load-restrictor
+  # LoadRestrictionsNone`, since the file is outside this directory.
+  - name: postgres-schema
+    files:
+      - ../../poll-application/schema.sql
+    options:
+      # The schema is only applied when the database is created: changing it must not restart PostgreSQL.
+      disableNameSuffixHash: true
