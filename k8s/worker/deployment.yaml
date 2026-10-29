@@ -6,6 +6,13 @@ spec:
   # Several workers can pop the same Redis list: votes keep being processed while a node is
   # drained or lost.
   replicas: 2
+  # Votes keep being processed during an update: a new worker must be ready (connected to Redis
+  # and PostgreSQL) before an old one is stopped.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: worker
