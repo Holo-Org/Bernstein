@@ -2,6 +2,7 @@
 
 Deployment process of the Poll application, from its sources to a Kubernetes cluster:
 build the images, push them to a private registry and deploy them with no-downtime updates.
+The reasons behind each choice are in [docs/technical-choices.md](docs/technical-choices.md).
 
 | Component | Source                    | Image                     | Status       |
 | --------- | ------------------------- | ------------------------- | ------------ |
