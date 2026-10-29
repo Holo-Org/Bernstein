@@ -4,3 +4,4 @@ kind: Kustomization
 # The `worker` image is set to the registry image by the deploy script.
 resources:
   - deployment.yaml
+  - pdb.yaml
