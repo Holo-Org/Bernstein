@@ -68,12 +68,16 @@ spec:
               path: /readyz
               port: http
             periodSeconds: 5
+          # On /readyz, not /healthz: the worker never reconnects a lost PostgreSQL connection
+          # (e.g. after a database restart), it only exits on the next vote. Restarting it after
+          # a minute without Redis or PostgreSQL makes it reconnect as soon as they are back.
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               cpu: 50m
