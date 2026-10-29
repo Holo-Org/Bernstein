@@ -10,4 +10,5 @@ labels:
 resources:
   - namespace.yaml
   - redis
+  - postgres
   - poll

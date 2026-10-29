@@ -9,7 +9,7 @@ build the images, push them to a private registry and deploy them with no-downti
 | Redis     | -                         | `redis:8.2-alpine`        | deployed     |
 | Worker    | `poll-application/worker` | built, pushed to ACR      | not deployed yet |
 | Result    | `poll-application/result` | built, pushed to ACR      | not deployed yet |
-| PostgreSQL| -                         | -                         | not deployed yet |
+| PostgreSQL| -                         | `postgres:18`             | deployed     |
 
 ## Infrastructure
 
@@ -56,9 +56,13 @@ Nothing secret is committed. Two kinds of credentials are needed:
    | ---------------- | -------- | ---------------------------------------------------------------------- |
    | `ACR_NAME`       | no       | Registry name (without `.azurecr.io`). Detected if the subscription has only one. |
    | `REDIS_PASSWORD` | yes      | Password of the Redis queue, stored in the `redis` Kubernetes Secret.  |
+   | `POSTGRES_PASSWORD` | yes   | Password of the PostgreSQL database, stored in the `postgres` Kubernetes Secret. |
 
    The deploy script creates the Kubernetes Secrets from these variables: passwords never
    appear in the manifests nor on a command line.
+
+   `POSTGRES_PASSWORD` is only applied when the database is created (first start on an empty
+   volume). To change it afterwards, also run `ALTER USER poll PASSWORD '...'` in the database.
 
 ## Deployment
 
@@ -96,6 +100,9 @@ The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<r
 3. Applies the manifests of `k8s/` (Kustomize) through a temporary overlay that points each
    image to the registry with the tag of its current sources. Only the services whose sources
    changed get a new tag, so only they are rolled out.
+   The build uses `--load-restrictor LoadRestrictionsNone`, because `k8s/postgres` reads
+   `poll-application/schema.sql` outside its directory (to render the manifests by hand:
+   `kubectl kustomize --load-restrictor LoadRestrictionsNone k8s`).
 4. Waits for the rollouts and prints the external addresses.
 
 ## Kubernetes resources
@@ -118,10 +125,56 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 - Password protected (`--requirepass`, from the `redis` Secret).
 - No persistence: it is only a transit queue, emptied continuously by the worker.
 
+### PostgreSQL
+
+- `StatefulSet` with 1 replica, `postgres:18`, exposed inside the cluster only by the headless
+  Service `postgres` (port 5432), which resolves to the pod once it is ready.
+- **Persistent votes**: a `volumeClaimTemplate` creates a 1 GiB `PersistentVolumeClaim`
+  (`data-postgres-0`) on the default AKS StorageClass (`default`, an Azure Standard SSD disk),
+  mounted on `/var/lib/postgresql`. Since PostgreSQL 18, the image stores its data in
+  `/var/lib/postgresql/18/docker` (`PGDATA`) and the volume is mounted on the parent directory.
+- **Schema**: `poll-application/schema.sql` is turned into the `postgres-schema` ConfigMap by
+  Kustomize (no copy) and mounted in `/docker-entrypoint-initdb.d`: the image applies it when it
+  creates the database, i.e. only on an empty volume.
+- **Configuration**: the `postgres` ConfigMap holds the connection settings shared with the
+  worker and result (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`); the
+  password comes from the `postgres` Secret (key `password`).
+- Startup, readiness and liveness probes with `pg_isready` over TCP, CPU and memory requests
+  and limits.
+
+Why these choices:
+
+- **StatefulSet rather than Deployment**: it gives the pod a stable identity (`postgres-0`) and
+  its own volume, created from the template and reattached to the pod wherever it is
+  rescheduled. It never runs two pods for one identity, while a Deployment could start the new
+  pod before the old one has released the disk.
+- **A single replica**: PostgreSQL has no built-in multi-writer replication; several replicas
+  would need an operator (streaming replication, failover), which is out of proportion here.
+- **Updates**: `RollingUpdate` on a single replica stops the pod, then starts the new one: the
+  database is briefly unavailable (a few seconds). Voting is not affected: poll only talks to
+  Redis. On a database error, the worker puts the current vote back at the head of the Redis
+  queue and exits; Kubernetes restarts it and it waits for the database, so no vote is lost.
+  Result also exits on a connection error and is restarted: the result page is unavailable
+  until the database is back. A database update is therefore not a no-downtime update, unlike
+  poll and result updates.
+- **No PodDisruptionBudget**: with one replica, `minAvailable: 1` would forbid any eviction and
+  block `kubectl drain` (and AKS upgrades) forever. The short interruption is accepted instead.
+
+What happens to the data:
+
+| Action                              | Result                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| Delete the pod                      | The StatefulSet recreates `postgres-0` with the same PVC: data kept.                        |
+| Delete the StatefulSet              | The PVC is kept (`persistentVolumeClaimRetentionPolicy: Retain`) and reused on redeploy.    |
+| Delete the namespace or the PVC     | The disk is deleted (`reclaimPolicy: Delete` of the `default` StorageClass): **data lost**.               |
+| `kubectl drain` the node            | The pod is evicted, the Azure disk is detached, then attached to the node where the pod restarts: data kept, a short interruption. The node pool has no availability zones, so the disk can follow the pod on any node. |
+
 ### Security
 
 All containers run as non-root, with a read-only root filesystem, no privilege escalation,
-all capabilities dropped and the `RuntimeDefault` seccomp profile.
+all capabilities dropped and the `RuntimeDefault` seccomp profile. The only writable paths are
+explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix socket in
+`/var/run/postgresql`).
 
 ## Cost management
 
