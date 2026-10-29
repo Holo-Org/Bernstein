@@ -7,7 +7,7 @@ build the images, push them to a private registry and deploy them with no-downti
 | --------- | ------------------------- | ------------------------- | ------------ |
 | Poll      | `poll-application/poll`   | built, pushed to ACR      | deployed     |
 | Redis     | -                         | `redis:8.2-alpine`        | deployed     |
-| Worker    | `poll-application/worker` | built, pushed to ACR      | not deployed yet |
+| Worker    | `poll-application/worker` | built, pushed to ACR      | deployed     |
 | Result    | `poll-application/result` | built, pushed to ACR      | not deployed yet |
 | PostgreSQL| -                         | `postgres:18`             | deployed     |
 
@@ -29,8 +29,8 @@ node image) always adds a temporary surge node: the pool uses `maxSurge: 1`.
 - With 3 nodes, the surge node would need 8 vCPUs and the upgrade would fail on the quota.
   A third node therefore requires a quota increase.
 
-During a drain, the 2 Poll replicas (one per node) and their `PodDisruptionBudget` keep the
-application available.
+During a drain, the 2 Poll and Worker replicas (one per node) and their `PodDisruptionBudget`s
+keep the application available.
 
 ## Requirements
 
@@ -125,6 +125,24 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 - Password protected (`--requirepass`, from the `redis` Secret).
 - No persistence: it is only a transit queue, emptied continuously by the worker.
 
+### Worker
+
+- `Deployment` with 2 replicas spread over the nodes. Both pop the same Redis list (`BLPOP`
+  hands each vote to a single worker), so votes keep being processed while a node is drained
+  or lost. No Service: its port 80 only serves the health endpoints.
+- **Updates**: `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1`. The readiness probe
+  (`/readyz`) checks Redis and PostgreSQL, so an old worker is only stopped once the new one is
+  connected to both. A `PodDisruptionBudget` (`minAvailable: 1`) keeps one worker during a drain.
+- **Liveness on `/readyz`** (not `/healthz`): the worker never reconnects a lost PostgreSQL
+  connection, it only exits on the next vote (after putting it back in the queue). The probe
+  restarts it after a minute without Redis or PostgreSQL, so it reconnects as soon as they are
+  back. A restart is harmless: the worker waits for its dependencies on startup.
+- Configuration from the `postgres` ConfigMap (`envFrom`), passwords from the `redis` and
+  `postgres` Secrets. Runs as uid 10001 rather than the image's `ubuntu` user (1000), which
+  belongs to the sudo and adm groups.
+- Limit: a vote popped by a worker that is killed before writing it (a window of a few
+  milliseconds) is lost; the application has no acknowledgement mechanism.
+
 ### PostgreSQL
 
 - `StatefulSet` with 1 replica, `postgres:18`, exposed inside the cluster only by the headless
@@ -153,7 +171,8 @@ Why these choices:
 - **Updates**: `RollingUpdate` on a single replica stops the pod, then starts the new one: the
   database is briefly unavailable (a few seconds). Voting is not affected: poll only talks to
   Redis. On a database error, the worker puts the current vote back at the head of the Redis
-  queue and exits; Kubernetes restarts it and it waits for the database, so no vote is lost.
+  queue and exits; Kubernetes restarts it (also through its liveness probe if no vote comes)
+  and it waits for the database, so no vote is lost.
   Result also exits on a connection error and is restarted: the result page is unavailable
   until the database is back. A database update is therefore not a no-downtime update, unlike
   poll and result updates.
