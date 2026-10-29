@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  # Several workers can pop the same Redis list: votes keep being processed while a node is
+  # drained or lost.
+  replicas: 2
+  # Votes keep being processed during an update: a new worker must be ready (connected to Redis
+  # and PostgreSQL) before an old one is stopped.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: worker
+      securityContext:
+        runAsNonRoot: true
+        # Not the `ubuntu` user (1000) of the image, which belongs to the sudo and adm groups.
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+        # The health endpoints listen on port 80: allow it without root.
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      containers:
+        - name: worker
+          image: worker
+          # POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB and POSTGRES_USER.
+          envFrom:
+            - configMapRef:
+                name: postgres
+          env:
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis
+                  key: password
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: password
+          # No Service: port 80 only serves the probes, the worker receives no traffic.
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          # On /readyz, not /healthz: the worker never reconnects a lost PostgreSQL connection
+          # (e.g. after a database restart), it only exits on the next vote. Restarting it after
+          # a minute without Redis or PostgreSQL makes it reconnect as soon as they are back.
+          livenessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # No writable volume needed: without a writable /tmp, the JVM keeps its performance
+          # data in memory.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

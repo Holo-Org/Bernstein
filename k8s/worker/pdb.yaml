@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker
+spec:
+  # A `kubectl drain` may only evict a worker while another one keeps processing the votes.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: worker
