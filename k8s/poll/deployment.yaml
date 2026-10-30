@@ -43,6 +43,11 @@ spec:
             # The user has no home directory, and gunicorn writes its control socket under $HOME.
             - name: HOME
               value: /tmp
+            # The image runs a single synchronous gunicorn worker: any connection that does not
+            # send its request at once (load balancer TCP probes, scanners, browser preconnects)
+            # blocks it, and the probes time out. Threaded workers serve the other requests meanwhile.
+            - name: GUNICORN_CMD_ARGS
+              value: --workers 2 --threads 4
             - name: REDIS_HOST
               value: redis
             - name: REDIS_PASSWORD
