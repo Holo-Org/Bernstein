@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: result
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: result
@@ -12,6 +12,14 @@ spec:
       labels:
         app: result
     spec:
+      # Spread the replicas over the nodes, so losing (or draining) one node keeps result up.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: result
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000 # `node` user of the image
