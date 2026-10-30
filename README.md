@@ -35,7 +35,7 @@ During a drain, the 2 Poll, Worker and Result replicas (one per node) and their
 
 ## Requirements
 
-- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make` and `bash` 4+.
+- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make`, `bash` 4+ and `curl`.
 - An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
 
 ## Credentials and secrets
@@ -86,6 +86,7 @@ The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<r
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
 | `addresses`  | Show the external addresses of the application                     |
+| `watch`      | Request the pages continuously and count the errors                |
 
 ### Build and push (`scripts/build-push.sh`)
 
@@ -105,6 +106,26 @@ The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<r
    `poll-application/schema.sql` outside its directory (to render the manifests by hand:
    `kubectl kustomize --load-restrictor LoadRestrictionsNone k8s`).
 4. Waits for the rollouts and prints the external addresses.
+
+### No-downtime update (`scripts/watch.sh`)
+
+To check that an update causes no downtime, run `make watch` in a terminal, then change the
+sources of a service and redeploy it in another one:
+
+```sh
+make watch                                  # terminal 1: stop it with Ctrl-C
+make all                                    # terminal 2, after changing e.g. poll's sources
+```
+
+`make watch` requests the external address of every `LoadBalancer` Service (poll and result)
+in a loop (about once a second per page from a remote machine, as each request waits for the
+previous one), prints each failed request (HTTP error or no answer within 5 s) and a
+progress line every 5 seconds. It also prints each new poll pod that serves the page, so the
+rollout is visible. On Ctrl-C (or after `DURATION` seconds), it prints the totals and fails if
+any request failed. URLs can also be given: `scripts/watch.sh http://<ip>/`.
+
+Measured on AKS while changing poll's sources and running `make all`: 688 requests on poll and
+687 on result, 0 errors; the new pods took over within the rollout.
 
 ## Kubernetes resources
 
