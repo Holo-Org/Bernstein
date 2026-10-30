@@ -8,7 +8,7 @@ NAMESPACE          := bernstein
 AKS := --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop credentials status build-push deploy all addresses
+.PHONY: help start stop credentials status build-push deploy all addresses watch
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -47,3 +47,6 @@ all: build-push deploy ## Build, push and deploy
 addresses: ## Show the external addresses of the application
 	@kubectl get services --namespace $(NAMESPACE) \
 	  -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name}: http://{.status.loadBalancer.ingress[0].ip}{"\n"}{end}'
+
+watch: ## Request the pages continuously and count the errors (run it during an update)
+	@scripts/watch.sh

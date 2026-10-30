@@ -12,6 +12,32 @@ The reasons behind each choice are in [docs/technical-choices.md](docs/technical
 | Result    | `poll-application/result` | built, pushed to ACR      | deployed     |
 | PostgreSQL| -                         | `postgres:18`             | deployed     |
 
+## Quick start (deploy from scratch on your own cluster)
+
+Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster attached to an Azure
+Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
+
+```sh
+git clone <this repository> && cd bernstein
+az login                                    # your Azure account (see Credentials and secrets)
+az account set --subscription <subscription-id>
+cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
+make credentials AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
+make all                                    # build and push the images, then deploy
+make addresses                              # poll: http://<ip>, result: http://<ip>
+```
+
+- **The Makefile defaults to our cluster** (`bernstein-rg` / `bernstein-aks`): always pass
+  `AKS_RESOURCE_GROUP` and `AKS_CLUSTER` to the targets that use Azure (`start`, `stop`,
+  `credentials`, `status`), or `make credentials` fails on a resource group you cannot access.
+  `make build-push`, `make deploy` and `make all` need no cluster name: they use the registry
+  of `.env` (or the only one of the subscription) and the current `kubectl` context.
+- If the subscription has several registries, also set `ACR_NAME` in `.env`.
+- The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
+  IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
+- To check a no-downtime update: `make watch` in a terminal, change the sources of poll or
+  result, then `make all` in another one (see [No-downtime update](#no-downtime-update-scriptswatchsh)).
+
 ## Infrastructure
 
 - **Azure** (Azure for Students), region `denmarkeast`, resource group `bernstein-rg`.
@@ -33,10 +59,38 @@ node image) always adds a temporary surge node: the pool uses `maxSurge: 1`.
 During a drain, the 2 Poll, Worker and Result replicas (one per node) and their
 `PodDisruptionBudget`s keep the application available.
 
+### Create the infrastructure
+
+Equivalent commands for our setup (the registry name must be globally unique):
+
+```sh
+az group create --name bernstein-rg --location denmarkeast
+az acr create --resource-group bernstein-rg --name <registry> --sku Basic
+az aks create --resource-group bernstein-rg --name bernstein-aks --tier free \
+  --node-count 2 --node-vm-size Standard_B2s_v2 \
+  --network-plugin azure --network-plugin-mode overlay \
+  --node-os-upgrade-channel NodeImage \
+  --attach-acr <registry> --generate-ssh-keys
+az aks nodepool update --resource-group bernstein-rg --cluster-name bernstein-aks \
+  --name nodepool1 --max-surge 1
+```
+
+`--attach-acr` gives the cluster nodes the `AcrPull` role on the registry. To check it, or to
+restore it on an existing cluster:
+
+```sh
+az aks check-acr --resource-group bernstein-rg --name bernstein-aks --acr <registry>.azurecr.io
+az aks update --resource-group bernstein-rg --name bernstein-aks --attach-acr <registry>
+```
+
 ## Requirements
 
-- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make` and `bash` 4+.
+- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make`, `bash` 4+ and `curl`.
 - An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
+- **Azure permissions**: `Contributor` on the resource group of the cluster and the registry
+  (to push the images, fetch the cluster credentials, start and stop the cluster). Attaching
+  the registry to the cluster (`--attach-acr`) creates a role assignment, so it also needs
+  `Owner` (or `User Access Administrator`) on the registry.
 
 ## Credentials and secrets
 
@@ -45,7 +99,9 @@ Nothing secret is committed. Two kinds of credentials are needed:
 1. **Azure credentials**: they are those of the Azure CLI. Log in once with `az login`
    (or `az login --service-principal ...` in a CI), and select the subscription with
    `az account set --subscription <id>`. The scripts use them to push to the registry and
-   to fetch the cluster credentials.
+   to fetch the cluster credentials. There are no separate Kubernetes credentials to set:
+   `make credentials` (or `make start`) writes them in `~/.kube/config` with
+   `az aks get-credentials`, from the Azure login.
 2. **Application secrets**: read from the environment, or from a `.env` file at the root of
    the repository (ignored by git). Variables already set in the environment take precedence.
 
@@ -73,8 +129,10 @@ make all          # build and push the images, then deploy
 make addresses    # show the external addresses
 ```
 
-The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<rg> AKS_CLUSTER=<name>`.
-`deploy.sh` itself targets the current `kubectl` context.
+The cluster defaults to ours; for another one, pass its name to every Azure target, e.g.
+`make start AKS_RESOURCE_GROUP=<rg> AKS_CLUSTER=<name>`. `deploy.sh` itself targets the current
+`kubectl` context, and `make start` waits until the cluster runs but the API server name may take
+a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting)).
 
 | Target       | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
@@ -86,6 +144,7 @@ The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<r
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
 | `addresses`  | Show the external addresses of the application                     |
+| `watch`      | Request the pages continuously and count the errors                |
 
 ### Build and push (`scripts/build-push.sh`)
 
@@ -105,6 +164,26 @@ The cluster defaults to ours; for another one: `make start AKS_RESOURCE_GROUP=<r
    `poll-application/schema.sql` outside its directory (to render the manifests by hand:
    `kubectl kustomize --load-restrictor LoadRestrictionsNone k8s`).
 4. Waits for the rollouts and prints the external addresses.
+
+### No-downtime update (`scripts/watch.sh`)
+
+To check that an update causes no downtime, run `make watch` in a terminal, then change the
+sources of a service and redeploy it in another one:
+
+```sh
+make watch                                  # terminal 1: stop it with Ctrl-C
+make all                                    # terminal 2, after changing e.g. poll's sources
+```
+
+`make watch` requests the external address of every `LoadBalancer` Service (poll and result)
+in a loop (about once a second per page from a remote machine, as each request waits for the
+previous one), prints each failed request (HTTP error or no answer within 5 s) and a
+progress line every 5 seconds. It also prints each new poll pod that serves the page, so the
+rollout is visible. On Ctrl-C (or after `DURATION` seconds), it prints the totals and fails if
+any request failed. URLs can also be given: `scripts/watch.sh http://<ip>/`.
+
+Measured on AKS while changing poll's sources and running `make all`: 688 requests on poll and
+687 on result, 0 errors; the new pods took over within the rollout.
 
 ## Kubernetes resources
 
@@ -218,6 +297,49 @@ All containers run as non-root, with a read-only root filesystem, no privilege e
 all capabilities dropped and the `RuntimeDefault` seccomp profile. The only writable paths are
 explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix socket in
 `/var/run/postgresql`).
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| ------- | ------------- |
+| `make credentials` or `make start` fails with `ResourceGroupNotFound` or `AuthorizationFailed` | The Makefile defaults to our cluster: pass `AKS_RESOURCE_GROUP` and `AKS_CLUSTER`. |
+| `make deploy` fails with `no such host` on the API server right after `make start` | The DNS name of the API server is recreated when the cluster starts and takes a minute or two to resolve everywhere. Wait, then run `make deploy` again. |
+| `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
+| `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
+| `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
+| `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
+| Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
+| An address shows `<pending>` | Azure is still creating the public IP: run `make addresses` again a minute later. |
+| Worker and result not ready, `password authentication failed` in their logs (`kubectl logs -n bernstein deploy/worker`), after `POSTGRES_PASSWORD` changed | The password is only set when the database is created. Use the original one, or run `ALTER USER poll PASSWORD '...'` in the database (or delete the namespace to start over, which deletes the votes). |
+
+To start over from an empty cluster (this **deletes the votes**, with the PostgreSQL disk):
+
+```sh
+kubectl delete namespace bernstein
+make deploy
+```
+
+## Repository layout
+
+```
+Makefile                  entry points (make help)
+.env.example              template of the local settings and secrets (.env is never committed)
+scripts/
+  lib.sh                  shared helpers (.env loading, registry name, image tags)
+  build-push.sh           build and push the images to the registry
+  deploy.sh               create the Secrets and apply the manifests
+  watch.sh                request the pages continuously during an update
+k8s/                      Kustomize manifests, namespace `bernstein`, one directory per component
+  kustomization.yaml      namespace, common label, list of the components
+  namespace.yaml
+  poll/ redis/ worker/ result/ postgres/
+poll-application/         sources of the application (provided), with schema.sql
+assets/                   original archive of the application sources (provided)
+docs/
+  technical-choices.md    why each choice was made, and what was not done
+  subject/                the project subject
+.github/workflows/        mirrors the repository (destination in the MIRROR_URL variable)
+```
 
 ## Cost management
 
