@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: result
+spec:
+  replicas: 2
+  # No downtime during an update: a new pod must be ready before an old one is removed.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: result
+  template:
+    metadata:
+      labels:
+        app: result
+    spec:
+      # Spread the replicas over the nodes, so losing (or draining) one node keeps result up.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: result
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # `node` user of the image
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        # The server listens on port 80: allow it without root.
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      # node runs as PID 1 without a SIGTERM handler, so it ignores SIGTERM and is only stopped
+      # by the SIGKILL at the end of this period: keep it short (it has no state to save).
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: result
+          image: result
+          # POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB and POSTGRES_USER.
+          envFrom:
+            - configMapRef:
+                name: postgres
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: password
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /readyz # 200 if PostgreSQL answers
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          lifecycle:
+            # Keep serving while the load balancer stops sending traffic to this pod.
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

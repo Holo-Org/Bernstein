@@ -3,7 +3,7 @@
 The decisions behind the deployment, and the ones we deliberately did not make.
 The README describes how to deploy; this document explains why it is done this way.
 
-Status: Redis, Poll, PostgreSQL and the worker are deployed; Result is not yet.
+Status: all the components (Poll, Redis, worker, PostgreSQL, Result) are deployed.
 
 ## 1. Azure infrastructure
 
@@ -47,8 +47,19 @@ Status: Redis, Poll, PostgreSQL and the worker are deployed; Result is not yet.
 | `preStop: sleep 5` | A terminating pod keeps serving while the load balancer stops sending it traffic. Without it, a few requests would fail during an update. |
 | PDB `minAvailable: 1` | A `kubectl drain` cannot stop both replicas at once. |
 | `LoadBalancer` Service rather than an Ingress | The simplest option: one public IP per exposed application, no extra controller to install. |
+| Threaded gunicorn workers (`GUNICORN_CMD_ARGS="--workers 2 --threads 4"`) | The image runs one synchronous worker, blocked by any connection that does not send its request at once (Azure load balancer TCP probes, scanners, browser preconnects). The probes then timed out and restarted the pods. Measured: up to 5 s on `/healthz` before, at most 11 ms after. Set through the environment, so the application sources stay untouched. |
 
-## 5. Redis
+## 5. Result
+
+| Choice | Why |
+|---|---|
+| 2 replicas spread over the nodes, `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`), readiness on `/readyz`, `preStop` delay, PDB | Same no-downtime setup as Poll. `/readyz` checks PostgreSQL. |
+| `sessionAffinity: ClientIP` on the `LoadBalancer` Service | The browser uses Socket.IO with HTTP long-polling only: each request carries a session id known by a single pod. AKS turns the setting into a `SourceIP` rule on the Azure load balancer, and kube-proxy keeps each client IP on the same pod. Measured: without it, 26 of 45 polling requests were rejected (`Session ID unknown`); with it, none. |
+| `externalTrafficPolicy: Cluster` (the default) | With `Local`, a node left without a ready result pod during a rollout would keep receiving traffic until the Azure probe marks it down. |
+| `terminationGracePeriodSeconds: 15` | node runs as PID 1 without a SIGTERM handler: it ignores SIGTERM and is only stopped by the final SIGKILL. A short period keeps rollouts fast; the pod has already left the load balancer by then. |
+| Image's `node` user (uid 1000) | A dedicated unprivileged user, without extra groups. |
+
+## 6. Redis
 
 | Choice | Why |
 |---|---|
@@ -57,7 +68,7 @@ Status: Redis, Poll, PostgreSQL and the worker are deployed; Result is not yet.
 | Password (`requirepass`) and `REDISCLI_AUTH` for the probes | Authenticated access, and the password never appears on a command line. |
 | `ClusterIP` Service | Redis is only reachable from inside the cluster. |
 
-## 6. PostgreSQL
+## 7. PostgreSQL
 
 | Choice | Why |
 |---|---|
@@ -81,7 +92,7 @@ What happens to the data:
 | Delete the namespace or the PVC | The disk is deleted (`reclaimPolicy: Delete` of the `default` StorageClass): **data lost**. |
 | `kubectl drain` the node | The pod is evicted, the disk is detached and attached elsewhere: data kept, short interruption. |
 
-## 7. Worker
+## 8. Worker
 
 | Choice | Why |
 |---|---|
@@ -92,7 +103,7 @@ What happens to the data:
 | uid 10001, not the image's `ubuntu` user | The `ubuntu` user (uid 1000) belongs to the sudo and adm groups. |
 | Known limit | A vote is lost if the worker is killed between taking it from Redis and writing it, a window of a few milliseconds. The application has no acknowledgement mechanism. |
 
-## 8. Security (all containers)
+## 9. Security (all containers)
 
 | Choice | Why |
 |---|---|
@@ -101,7 +112,7 @@ What happens to the data:
 | Sysctl `net.ipv4.ip_unprivileged_port_start=0` | The applications listen on port 80 without root and without the `NET_BIND_SERVICE` capability. |
 | Requests and limits everywhere | Predictable scheduling, and no pod can starve the others. It is also how the CPU of Redis is limited. |
 
-## 9. What we chose not to do
+## 10. What we chose not to do
 
 | Not done | Why |
 |---|---|
@@ -117,8 +128,8 @@ What happens to the data:
 
 | Event | Effect |
 |---|---|
-| A node is drained | Poll and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). |
+| A node is drained | Poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). |
 | A node is lost | Same as a drain, without the PDBs' protection: the pods are rescheduled once Kubernetes declares the node down (about 5 minutes, the default `not-ready`/`unreachable` toleration). |
 | Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. |
 | PostgreSQL restarts | Votes wait in Redis; the workers restart and reconnect; the result page is briefly unavailable. |
-| Poll's sources change and `make all` runs | Only poll gets a new tag and is rolled out, one pod at a time, with no failed request. |
+| Poll's or result's sources change and `make all` runs | Only that service gets a new tag and is rolled out, one pod at a time. Measured during a rollout of both: 898 requests, 0 errors. |

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: result
+spec:
+  type: LoadBalancer
+  # The browser talks to Socket.IO with HTTP long-polling only (`transports: ['polling']`):
+  # each request carries a session id known by a single pod, so a client must always reach the
+  # same pod. On AKS, this also makes the Azure load balancer hash on the client IP only.
+  sessionAffinity: ClientIP
+  selector:
+    app: result
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -9,7 +9,7 @@ The reasons behind each choice are in [docs/technical-choices.md](docs/technical
 | Poll      | `poll-application/poll`   | built, pushed to ACR      | deployed     |
 | Redis     | -                         | `redis:8.2-alpine`        | deployed     |
 | Worker    | `poll-application/worker` | built, pushed to ACR      | deployed     |
-| Result    | `poll-application/result` | built, pushed to ACR      | not deployed yet |
+| Result    | `poll-application/result` | built, pushed to ACR      | deployed     |
 | PostgreSQL| -                         | `postgres:18`             | deployed     |
 
 ## Infrastructure
@@ -30,8 +30,8 @@ node image) always adds a temporary surge node: the pool uses `maxSurge: 1`.
 - With 3 nodes, the surge node would need 8 vCPUs and the upgrade would fail on the quota.
   A third node therefore requires a quota increase.
 
-During a drain, the 2 Poll and Worker replicas (one per node) and their `PodDisruptionBudget`s
-keep the application available.
+During a drain, the 2 Poll, Worker and Result replicas (one per node) and their
+`PodDisruptionBudget`s keep the application available.
 
 ## Requirements
 
@@ -118,6 +118,11 @@ Everything lives in the `bernstein` namespace (`k8s/`).
   and a `preStop` delay so a terminating pod keeps serving while the load balancer forgets it.
 - A `PodDisruptionBudget` (`minAvailable: 1`) keeps one replica up during a `kubectl drain`.
 - Liveness probe on `/healthz`, CPU and memory requests and limits.
+- **Threaded gunicorn workers** (`GUNICORN_CMD_ARGS="--workers 2 --threads 4"`): the image runs
+  a single synchronous worker, which any connection that does not send its request at once
+  (the Azure load balancer TCP probes, scanners, browser preconnects) blocks for seconds. The
+  Kubernetes probes then timed out and restarted the pods. Measured: up to 5 s on `/healthz`
+  with one sync worker, at most 11 ms with threaded workers.
 
 ### Redis
 
@@ -125,6 +130,24 @@ Everything lives in the `bernstein` namespace (`k8s/`).
   two separate queues. Exposed inside the cluster only (`ClusterIP`).
 - Password protected (`--requirepass`, from the `redis` Secret).
 - No persistence: it is only a transit queue, emptied continuously by the worker.
+
+### Result
+
+- `Deployment` with 2 replicas spread over the nodes, exposed by a `LoadBalancer` Service, with
+  the same no-downtime setup as Poll: `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`),
+  readiness probe on `/readyz` (checks PostgreSQL), `preStop` delay and a `PodDisruptionBudget`.
+- **Sticky sessions** (`sessionAffinity: ClientIP`): the browser talks to Socket.IO with HTTP
+  long-polling only (`transports: ['polling']`), and each request carries a session id known by
+  a single pod. AKS turns this setting into a `SourceIP` distribution on the Azure load balancer
+  rule, and kube-proxy keeps each client IP on the same pod. Measured with a Socket.IO polling
+  client: without it, 26 of 45 requests were rejected (`Session ID unknown`); with it, none.
+- `externalTrafficPolicy` stays `Cluster`: with `Local`, a node left without a ready result pod
+  during a rollout would keep receiving traffic until the Azure probe marks it down.
+- `terminationGracePeriodSeconds: 15`: node runs as PID 1 without a SIGTERM handler, so it
+  ignores SIGTERM and is only stopped by the final SIGKILL. A short period keeps rollouts fast;
+  the pod has already left the load balancer by then.
+- Configuration from the `postgres` ConfigMap (`envFrom`) and the `postgres` Secret, runs as
+  the image's `node` user (uid 1000).
 
 ### Worker
 
