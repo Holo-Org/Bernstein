@@ -13,3 +13,4 @@ resources:
   - postgres
   - worker
   - poll
+  - result
