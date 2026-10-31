@@ -112,7 +112,19 @@ What happens to the data:
 | Sysctl `net.ipv4.ip_unprivileged_port_start=0` | The applications listen on port 80 without root and without the `NET_BIND_SERVICE` capability. |
 | Requests and limits everywhere | Predictable scheduling, and no pod can starve the others. It is also how the CPU of Redis is limited. |
 
-## 10. What we chose not to do
+## 10. Scheduling and affinity
+
+| Choice | Why |
+|---|---|
+| `topologySpreadConstraints` on `kubernetes.io/hostname`, `maxSkew: 1`, for poll, result and the worker | One replica per node: losing or draining a node keeps every service up. Also spreads more replicas evenly (2 + 2 for 4). |
+| `ScheduleAnyway` rather than `DoNotSchedule` or a required `podAntiAffinity` | On 2 nodes, a hard rule leaves a replica `Pending` during a drain or a node loss (the other node already runs one), and keeps the autoscaler from adding replicas. Two replicas on one node are better than one. |
+| `matchLabelKeys: ["pod-template-hash"]` | Only the pods of the same version are counted: otherwise, during a rollout, the old pods about to be removed attract the new ones to their node. |
+| `make start` rebalances the pods (`scripts/rebalance.sh`) | When the cluster starts, its nodes are not ready at the same time and every pod lands on the first one (observed: all 8 pods on one node). Kubernetes never moves a running pod, so the script restarts, with a no-downtime rollout, each Deployment whose replicas share fewer nodes than they could. Measured during a rebalance of poll: 369 requests on each page, 0 errors. |
+| No descheduler | It would rebalance continuously, but it is one more component to install and run; the cluster only becomes unbalanced when it starts. |
+| No affinity for Redis and PostgreSQL | A single replica has nothing to spread, and the PostgreSQL disk can follow its pod to any node (no availability zones). |
+| No `nodeAffinity`, taints or tolerations | The cluster has a single pool of identical nodes. |
+
+## 11. What we chose not to do
 
 | Not done | Why |
 |---|---|

@@ -145,6 +145,7 @@ a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting
 | `all`        | `build-push` then `deploy`                                         |
 | `addresses`  | Show the external addresses of the application                     |
 | `watch`      | Request the pages continuously and count the errors                |
+| `rebalance`  | Spread the replicas over the nodes again (run by `start`)          |
 
 ### Build and push (`scripts/build-push.sh`)
 
@@ -291,6 +292,31 @@ What happens to the data:
 | Delete the namespace or the PVC     | The disk is deleted (`reclaimPolicy: Delete` of the `default` StorageClass): **data lost**.               |
 | `kubectl drain` the node            | The pod is evicted, the Azure disk is detached, then attached to the node where the pod restarts: data kept, a short interruption. The node pool has no availability zones, so the disk can follow the pod on any node. |
 
+### Scheduling and affinity
+
+The replicas of poll, result and the worker are spread over the nodes, so that losing or
+draining a node keeps every service up. Each of them uses a `topologySpreadConstraint` on
+`kubernetes.io/hostname` with `maxSkew: 1`:
+
+- **`whenUnsatisfiable: ScheduleAnyway`** (a preference, not a rule): with 2 nodes,
+  `DoNotSchedule` (or a required `podAntiAffinity`) would leave a replica `Pending` during a
+  `kubectl drain` or after a node loss, as the other node already runs one; two replicas on the
+  same node are better than one. It would also keep the autoscaler from adding replicas.
+- **`matchLabelKeys: ["pod-template-hash"]`**: only the pods of the same version are counted.
+  Otherwise, during a rollout, the old pods about to be removed attract the new ones to their
+  node, and both new pods can end up on the same node.
+- **Rebalancing after a start** (`scripts/rebalance.sh`, run by `make start`): the nodes of a
+  starting cluster do not become ready at the same time, and every pod is recreated on the
+  first one (observed: all 8 pods on one node). Kubernetes never moves a running pod, so the
+  script waits for the API server and every node, then restarts (with a no-downtime rollout)
+  each Deployment whose replicas share fewer nodes than they could. The Kubernetes
+  [descheduler](https://github.com/kubernetes-sigs/descheduler) does this continuously, but it
+  is one more component to run on the cluster.
+
+Redis and PostgreSQL have no affinity: a single replica has nothing to spread, and the
+PostgreSQL disk can follow its pod to any node (no availability zones). There is no
+`nodeAffinity` either: the cluster has a single pool of identical nodes.
+
 ### Security
 
 All containers run as non-root, with a read-only root filesystem, no privilege escalation,
@@ -303,7 +329,7 @@ explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix
 | Symptom | Cause and fix |
 | ------- | ------------- |
 | `make credentials` or `make start` fails with `ResourceGroupNotFound` or `AuthorizationFailed` | The Makefile defaults to our cluster: pass `AKS_RESOURCE_GROUP` and `AKS_CLUSTER`. |
-| `make deploy` fails with `no such host` on the API server right after `make start` | The DNS name of the API server is recreated when the cluster starts and takes a minute or two to resolve everywhere. Wait, then run `make deploy` again. |
+| `kubectl` or `make deploy` fails with `no such host` on the API server | The cluster is stopped (`make start`), or has just started: its DNS name only resolves some of the time for a few minutes. `make start` waits for it (`scripts/rebalance.sh`); otherwise wait and retry. |
 | `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
 | `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
 | `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
@@ -329,6 +355,7 @@ scripts/
   build-push.sh           build and push the images to the registry
   deploy.sh               create the Secrets and apply the manifests
   watch.sh                request the pages continuously during an update
+  rebalance.sh            spread the replicas over the nodes again (after a start)
 k8s/                      Kustomize manifests, namespace `bernstein`, one directory per component
   kustomization.yaml      namespace, common label, list of the components
   namespace.yaml

@@ -22,10 +22,15 @@ spec:
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
+          # A preference, not a rule: on 2 nodes, DoNotSchedule would leave a replica Pending
+          # during a drain or a node loss, and keep the autoscaler from adding replicas.
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
               app: poll
+          # Only count the pods of the same version: during a rollout, the old pods about to be
+          # removed would otherwise attract the new ones to the same node.
+          matchLabelKeys: ["pod-template-hash"]
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

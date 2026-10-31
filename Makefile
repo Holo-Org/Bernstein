@@ -8,18 +8,19 @@ NAMESPACE          := bernstein
 AKS := --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop credentials status build-push deploy all addresses watch
+.PHONY: help start stop credentials status build-push deploy all addresses watch rebalance
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-start: ## Start the AKS cluster (if stopped) and fetch its kubectl credentials
+start: ## Start the AKS cluster (if stopped), fetch its kubectl credentials and spread the pods
 	@if [ "$$(az aks show $(AKS) --query powerState.code -o tsv)" = Running ]; then \
 	  echo "==> $(AKS_CLUSTER) is already running"; \
 	else \
 	  echo "==> Starting $(AKS_CLUSTER)"; az aks start $(AKS); \
 	fi
 	@$(MAKE) --no-print-directory credentials
+	@scripts/rebalance.sh
 
 stop: ## Stop the AKS cluster, so it no longer uses credits
 	@if [ "$$(az aks show $(AKS) --query powerState.code -o tsv)" = Stopped ]; then \
@@ -50,3 +51,6 @@ addresses: ## Show the external addresses of the application
 
 watch: ## Request the pages continuously and count the errors (run it during an update)
 	@scripts/watch.sh
+
+rebalance: ## Spread the replicas over the nodes again (done by start)
+	@scripts/rebalance.sh
