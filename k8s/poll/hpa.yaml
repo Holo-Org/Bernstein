@@ -1,0 +1,29 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: poll
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: poll
+  # Never below 2, one per node (see the PodDisruptionBudget). At most 4: what 2 nodes hold
+  # next to the other pods, within the CPU requests.
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70 # of the CPU request
+  behavior:
+    # Remove one pod per minute at most, after 5 minutes of lower load: a short dip does not
+    # remove capacity, and the clients of a removed pod reconnect a few at a time.
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
