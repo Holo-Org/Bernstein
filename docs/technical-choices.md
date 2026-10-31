@@ -65,6 +65,7 @@ Status: all the components (Poll, Redis, worker, PostgreSQL, Result) are deploye
 |---|---|
 | 1 replica, `Recreate` strategy | Two Redis pods at once would be two separate queues, and some votes would go to the one nobody reads. |
 | No persistence | Redis is only a transit queue, emptied continuously by the worker. **Accepted consequence**: the votes waiting in the queue are lost if Redis restarts. |
+| `--maxmemory 100mb` (default `noeviction` policy) | If the workers stop, the queue grows: once full (about a million votes), Redis refuses new votes instead of being killed by its memory limit and losing the queued ones. Tested: new votes got an HTTP 500, the 469 queued votes were kept and processed once the workers were back. |
 | Password (`requirepass`) and `REDISCLI_AUTH` for the probes | Authenticated access, and the password never appears on a command line. |
 | `ClusterIP` Service | Redis is only reachable from inside the cluster. |
 
@@ -110,7 +111,7 @@ What happens to the data:
 | Non-root, all capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp | A compromised container can do as little as possible. |
 | Read-only root filesystem | Only explicitly declared volumes are writable (PostgreSQL data and socket, gunicorn's `/tmp`). |
 | Sysctl `net.ipv4.ip_unprivileged_port_start=0` | The applications listen on port 80 without root and without the `NET_BIND_SERVICE` capability. |
-| Requests and limits everywhere | Predictable scheduling, and no pod can starve the others. It is also how the CPU of Redis is limited. |
+| Requests and limits everywhere | Predictable scheduling, and no pod can starve the others (values in section 12). |
 
 ## 10. Scheduling and affinity
 
@@ -137,7 +138,31 @@ What happens to the data:
 | No cluster autoscaler | The vCPU quota fixes the cluster at 2 nodes (section 1). |
 | `make load` (`scripts/load.sh`) | Shows the autoscaling with `curl` alone. Measured: 2 to 4 replicas within about 70 s, then (after a restart, without load) back to 2 one pod per minute, still one per node; `make watch` saw no error in either direction. |
 
-## 12. What we chose not to do
+## 12. Resource requests and limits
+
+Measured on AKS: idle, under `make load` (about 540 requests per second on each page) and under
+a vote load (about 100 votes per second). Peaks from the containers' cgroup (`memory.peak`,
+`cpu.stat`), as `kubectl top` only gives averages over about a minute.
+
+| Container | Idle | Under load (memory: peak) | Requests | Limits |
+|---|---|---|---|---|
+| poll | 2m, 86Mi | 300m, 97Mi | 50m, 128Mi | 500m, 192Mi |
+| result | 2m, 25Mi | 210m, 28Mi | 50m, 64Mi | 500m, 128Mi |
+| worker | 2m, 45Mi | 20m, 58Mi | 50m, 128Mi | 500m, 256Mi |
+| redis | 12m, 5Mi | 45m, 9Mi | 50m, 64Mi | 500m, 128Mi |
+| postgres | 18m, 37Mi | 43m, 49Mi | 100m, 256Mi | 500m, 512Mi |
+
+| Choice | Why |
+|---|---|
+| Memory requests above the measured peak | Memory cannot be taken back from a running process, and a pod above its request is the first one evicted when a node runs short. Poll's went from 96Mi to 128Mi after its 97Mi peak. The worker's covers the heap the JVM may grow to (sized from the limit: at most 126Mi), PostgreSQL's its 128MB of `shared_buffers`. |
+| Memory limits at about twice the peak | Room for spikes, while a leak only gets its own container killed and restarted instead of starving the node. |
+| CPU requests at the usual usage | What the scheduler reserves, and the base of the autoscalers' target. Under load, pods use the idle CPU of the node, and the autoscalers add pods rather than make them bigger. |
+| CPU limits kept | They cap a runaway container on 2-vCPU nodes shared with the AKS system pods. Above them, a container is throttled, not killed (seen in `cpu.stat` for the JVM's startup and short bursts). |
+| Redis CPU limit from 250m to 500m | Redis was throttled in bursts, while it is single-threaded and on the path of every vote. |
+| Burstable QoS (requests below limits) | `Guaranteed` would reserve the peak at all times, which 2 nodes cannot afford with 4 replicas of poll and result. |
+| It fits | At the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of memory out of 3.8 CPUs and 11Gi allocatable (1.9 CPUs requested in total with the AKS system pods). |
+
+## 13. What we chose not to do
 
 | Not done | Why |
 |---|---|
@@ -154,7 +179,8 @@ What happens to the data:
 |---|---|
 | A node is drained | Poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). |
 | A node is lost | Same as a drain, without the PDBs' protection: the pods are rescheduled once Kubernetes declares the node down (about 5 minutes, the default `not-ready`/`unreachable` toleration). |
-| Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. |
+| Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. Measured when its configuration changed: back within seconds, before poll's readiness probe failed, so no page error. |
+| The workers stop | Votes wait in Redis. Past 100MB (about a million votes), new votes are refused (HTTP 500) and the queued ones are kept. |
 | PostgreSQL restarts | Votes wait in Redis; the workers restart and reconnect; the result page is briefly unavailable. |
 | The traffic rises | The autoscalers add poll and result pods (up to 4 each) within about a minute, and remove them one per minute once it is gone. |
 | Poll's or result's sources change and `make all` runs | Only that service gets a new tag and is rolled out, one pod at a time. Measured during a rollout of both: 898 requests, 0 errors. |
