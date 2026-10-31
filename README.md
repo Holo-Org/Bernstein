@@ -2,7 +2,8 @@
 
 Deployment process of the Poll application, from its sources to a Kubernetes cluster:
 build the images, push them to a private registry and deploy them with no-downtime updates.
-The reasons behind each choice are in [docs/technical-choices.md](docs/technical-choices.md).
+The reasons behind each choice are in [docs/technical-choices.md](docs/technical-choices.md),
+one section per evaluation criterion (replicas, restart policies, resource limits, ports, ...).
 
 | Component | Source                    | Image                     | Status       |
 | --------- | ------------------------- | ------------------------- | ------------ |
@@ -296,6 +297,21 @@ What happens to the data:
 | Delete the StatefulSet              | The PVC is kept (`persistentVolumeClaimRetentionPolicy: Retain`) and reused on redeploy.    |
 | Delete the namespace or the PVC     | The disk is deleted (`reclaimPolicy: Delete` of the `default` StorageClass): **data lost**.               |
 | `kubectl drain` the node            | The pod is evicted, the Azure disk is detached, then attached to the node where the pod restarts: data kept, a short interruption. The node pool has no availability zones, so the disk can follow the pod on any node. |
+
+### Restart policies
+
+Every pod keeps the default `restartPolicy: Always`, the only value a `Deployment` or a
+`StatefulSet` accepts: the kubelet restarts a stopped container in place, with an exponential
+back-off (`CrashLoopBackOff`, up to 5 minutes between attempts).
+
+- It is how the application recovers from a lost dependency: result exits when its PostgreSQL
+  connection fails, and the worker on the next vote; both are restarted and reconnect.
+- Liveness probes restart a stuck process; readiness probes only take a pod out of the load
+  balancer. Poll and result check their dependencies in readiness only, so a Redis or
+  PostgreSQL outage does not send them into `CrashLoopBackOff`. The worker's liveness probe
+  checks its dependencies on purpose (see [Worker](#worker)).
+- A container over its memory limit is killed and restarted in place (`OOMKilled`).
+- No `Job`: there is no one-shot task, the schema is applied by the PostgreSQL entrypoint.
 
 ### Scheduling and affinity
 
