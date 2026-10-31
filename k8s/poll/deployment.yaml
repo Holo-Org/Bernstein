@@ -81,10 +81,12 @@ spec:
             preStop:
               exec:
                 command: ["sleep", "5"]
+          # Measured: 2m and 86Mi idle, up to 300m and a 97Mi peak under load. More CPU means more
+          # pods (hpa.yaml), not bigger ones; memory barely grows with the load.
           resources:
             requests:
               cpu: 50m
-              memory: 96Mi
+              memory: 128Mi
             limits:
               cpu: 500m
               memory: 192Mi
