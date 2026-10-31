@@ -26,7 +26,11 @@ spec:
         - name: redis
           image: redis:8.2-alpine
           # Redis is only a transit queue (the worker empties it continuously): no persistence.
-          args: ["--requirepass", "$(REDIS_PASSWORD)", "--save", "", "--appendonly", "no"]
+          # If the workers stop, the queue grows: past 100MB (about a million votes, below the
+          # memory limit), Redis refuses new votes (default noeviction policy) rather than being
+          # killed by the limit and losing the queued ones.
+          args: ["--requirepass", "$(REDIS_PASSWORD)", "--save", "", "--appendonly", "no",
+                 "--maxmemory", "100mb"]
           env:
             - name: REDIS_PASSWORD
               valueFrom:
@@ -51,12 +55,14 @@ spec:
               port: redis
             initialDelaySeconds: 10
             periodSeconds: 10
+          # Measured: 12m and 5Mi idle, 45m and a 9Mi peak at 100 votes per second. Single-threaded
+          # and on the path of every vote: with 250m, it was throttled in bursts.
           resources:
             requests:
               cpu: 50m
               memory: 64Mi
             limits:
-              cpu: 250m
+              cpu: 500m
               memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false

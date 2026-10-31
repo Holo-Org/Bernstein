@@ -212,6 +212,9 @@ Everything lives in the `bernstein` namespace (`k8s/`).
   two separate queues. Exposed inside the cluster only (`ClusterIP`).
 - Password protected (`--requirepass`, from the `redis` Secret).
 - No persistence: it is only a transit queue, emptied continuously by the worker.
+- `--maxmemory 100mb` (about a million votes): if the workers stop, the queue grows until
+  Redis refuses new votes (default `noeviction` policy), instead of being killed by its memory
+  limit and losing the queued ones (see [Resources](#resources)).
 
 ### Result
 
@@ -357,6 +360,46 @@ Measured on AKS with `make load` (about 540 requests per second on each page): w
 The cluster was then stopped at 4 replicas; after a restart, without load, the autoscalers went
 back to 3, then to 2 a minute later, still one per node (the ReplicaSet removes first the pods
 of the node that runs the most), with no error either (454 requests on each page).
+
+### Resources
+
+Every container has CPU and memory requests and limits, set from measurements on AKS: idle,
+under `make load` (about 540 requests per second on each page) and under a vote load (about
+100 votes per second). `kubectl top` gives averages over about a minute, so the peaks come from
+the container's cgroup (`memory.peak` since its start, and `cpu.stat` for the time throttled by
+the CPU limit), read with `kubectl exec`.
+
+| Container | Idle | Under load (memory: peak) | Requests | Limits |
+| --------- | ---- | ------------------------- | -------- | ------ |
+| poll      | 2m, 86Mi  | 300m, 97Mi | 50m, 128Mi  | 500m, 192Mi |
+| result    | 2m, 25Mi  | 210m, 28Mi | 50m, 64Mi   | 500m, 128Mi |
+| worker    | 2m, 45Mi  | 20m, 58Mi  | 50m, 128Mi  | 500m, 256Mi |
+| redis     | 12m, 5Mi  | 45m, 9Mi   | 50m, 64Mi   | 500m, 128Mi |
+| postgres  | 18m, 37Mi | 43m, 49Mi  | 100m, 256Mi | 500m, 512Mi |
+
+- **Memory requests above the measured peak**: memory cannot be taken back from a running
+  process, and a pod above its request is the first one evicted when a node runs short. The
+  worker's request also covers the heap the JVM may grow to (it sizes it from the memory limit:
+  at most 126Mi with 256Mi), and PostgreSQL's the 128MB of `shared_buffers` once the data
+  outgrows them (9.5MB today). Poll's request went from 96Mi to 128Mi after its 97Mi peak.
+- **Memory limits at about twice the peak**: room for spikes, while a leak only gets its own
+  container killed (`OOMKilled`, then restarted) instead of starving the node.
+- **CPU requests at the usual usage**: what the scheduler reserves on the node, and the base of
+  the autoscalers' target (70 % of 50m). Under load, poll and result use more than their request
+  from the idle CPU of the node, and the autoscalers add pods rather than make them bigger.
+- **CPU limits** cap a runaway container on 2-vCPU nodes shared with the AKS system pods. Above
+  them, the container is throttled, not killed: `cpu.stat` showed it for the JVM's startup and in
+  short bursts under load. Redis was throttled in bursts with 250m, while it is on the path of
+  every vote: its limit went to 500m.
+- **Burstable QoS** (requests below limits) for every pod: `Guaranteed` (requests equal to
+  limits) would reserve the peak at all times, which 2 nodes cannot afford with 4 replicas of
+  poll and result.
+- **It fits**: at the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of
+  memory, out of 3.8 CPUs and 11Gi allocatable on the 2 nodes (with the AKS system pods, 1.9
+  CPUs were requested in total).
+- **Redis `maxmemory`**, tested with a lowered limit and the workers stopped: once full, new
+  votes got an HTTP 500 from poll, the 469 queued votes were kept, Redis was not restarted, and
+  the workers emptied the queue when they came back.
 
 ### Security
 
