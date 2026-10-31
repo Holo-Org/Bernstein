@@ -41,7 +41,7 @@ Status: all the components (Poll, Redis, worker, PostgreSQL, Result) are deploye
 
 | Choice | Why |
 |---|---|
-| 2 replicas spread over the nodes | Poll stays available when a node is lost or drained. |
+| 2 to 4 replicas (autoscaled, see section 11) spread over the nodes | Poll stays available when a node is lost or drained. |
 | `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1` | **No-downtime updates**: a new pod must be ready before an old one is removed. |
 | Readiness probe on `/readyz`, which checks Redis | A pod only receives traffic when it can actually record a vote. |
 | `preStop: sleep 5` | A terminating pod keeps serving while the load balancer stops sending it traffic. Without it, a few requests would fail during an update. |
@@ -53,7 +53,7 @@ Status: all the components (Poll, Redis, worker, PostgreSQL, Result) are deploye
 
 | Choice | Why |
 |---|---|
-| 2 replicas spread over the nodes, `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`), readiness on `/readyz`, `preStop` delay, PDB | Same no-downtime setup as Poll. `/readyz` checks PostgreSQL. |
+| 2 to 4 replicas (autoscaled) spread over the nodes, `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`), readiness on `/readyz`, `preStop` delay, PDB | Same no-downtime setup as Poll. `/readyz` checks PostgreSQL. |
 | `sessionAffinity: ClientIP` on the `LoadBalancer` Service | The browser uses Socket.IO with HTTP long-polling only: each request carries a session id known by a single pod. AKS turns the setting into a `SourceIP` rule on the Azure load balancer, and kube-proxy keeps each client IP on the same pod. Measured: without it, 26 of 45 polling requests were rejected (`Session ID unknown`); with it, none. |
 | `externalTrafficPolicy: Cluster` (the default) | With `Local`, a node left without a ready result pod during a rollout would keep receiving traffic until the Azure probe marks it down. |
 | `terminationGracePeriodSeconds: 15` | node runs as PID 1 without a SIGTERM handler: it ignores SIGTERM and is only stopped by the final SIGKILL. A short period keeps rollouts fast; the pod has already left the load balancer by then. |
@@ -124,12 +124,24 @@ What happens to the data:
 | No affinity for Redis and PostgreSQL | A single replica has nothing to spread, and the PostgreSQL disk can follow its pod to any node (no availability zones). |
 | No `nodeAffinity`, taints or tolerations | The cluster has a single pool of identical nodes. |
 
-## 11. What we chose not to do
+## 11. Auto-scaling
+
+| Choice | Why |
+|---|---|
+| A `HorizontalPodAutoscaler` on poll and result, on CPU | They receive the public traffic and are stateless, so more pods means more capacity. CPU needs nothing beyond the metrics-server AKS already runs. |
+| 2 to 4 replicas | 2: one per node, as the PDBs expect. 4: the CPU requests still fit on 2 nodes next to the other pods and the AKS system pods, and the spread constraints place them 2 + 2. |
+| Target: 70 % of the CPU request (50m) | Leaves room to absorb a rise while the new pods start. Measured: about 0.8m of CPU per request per second on poll, so it scales beyond about 45 requests per second per pod. |
+| No `replicas` in the Deployments | A value would bring the count back to 2 on every deployment, even under load. On the first deployment, the count went to 1 for a few seconds until the autoscaler restored the minimum: 0 errors measured. |
+| Scale-down after 5 minutes, one pod per minute | A short dip does not remove capacity, and the Socket.IO clients of a removed result pod reconnect a few at a time. |
+| No autoscaling for the worker | 2 workers keep up with far more votes than poll can receive, and the CPU does not show a backlog. The right metric, the length of the Redis list, needs an external metrics adapter (KEDA). |
+| No cluster autoscaler | The vCPU quota fixes the cluster at 2 nodes (section 1). |
+| `make load` (`scripts/load.sh`) | Shows the autoscaling with `curl` alone. Measured: 2 to 4 replicas within about 70 s, then (after a restart, without load) back to 2 one pod per minute, still one per node; `make watch` saw no error in either direction. |
+
+## 12. What we chose not to do
 
 | Not done | Why |
 |---|---|
 | Ingress and TLS | Two public IPs are enough for the subject; an Ingress controller would be one more component to run. |
-| Horizontal Pod Autoscaler | Low load and a tight vCPU quota. It can be added if needed. |
 | Redis persistence | Redis is a transit queue (see above). |
 | PostgreSQL high availability | An operator or a managed service (Azure Database for PostgreSQL) would be the production answer, but it is out of proportion here and costs credits. |
 | Helm, CI/CD | The scripts and Kustomize are enough: clone the repository, fill in `.env`, run `make all`. |
@@ -144,4 +156,5 @@ What happens to the data:
 | A node is lost | Same as a drain, without the PDBs' protection: the pods are rescheduled once Kubernetes declares the node down (about 5 minutes, the default `not-ready`/`unreachable` toleration). |
 | Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. |
 | PostgreSQL restarts | Votes wait in Redis; the workers restart and reconnect; the result page is briefly unavailable. |
+| The traffic rises | The autoscalers add poll and result pods (up to 4 each) within about a minute, and remove them one per minute once it is gone. |
 | Poll's or result's sources change and `make all` runs | Only that service gets a new tag and is rolled out, one pod at a time. Measured during a rollout of both: 898 requests, 0 errors. |

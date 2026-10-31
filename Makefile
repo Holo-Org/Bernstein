@@ -8,7 +8,7 @@ NAMESPACE          := bernstein
 AKS := --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop credentials status build-push deploy all addresses watch rebalance
+.PHONY: help start stop credentials status build-push deploy all addresses watch load rebalance
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -32,10 +32,10 @@ stop: ## Stop the AKS cluster, so it no longer uses credits
 credentials: ## Point kubectl to the AKS cluster
 	az aks get-credentials $(AKS) --overwrite-existing
 
-status: ## Show the cluster power state and the application pods
+status: ## Show the cluster power state, the application pods and the autoscalers
 	@state="$$(az aks show $(AKS) --query powerState.code -o tsv)"; \
 	echo "==> $(AKS_CLUSTER): $$state"; \
-	if [ "$$state" = Running ]; then kubectl get pods,services --namespace $(NAMESPACE) --request-timeout=10s; fi
+	if [ "$$state" = Running ]; then kubectl get pods,services,hpa --namespace $(NAMESPACE) --request-timeout=10s; fi
 
 build-push: ## Build and push the images (only some of them with SERVICES="poll worker")
 	scripts/build-push.sh $(SERVICES)
@@ -51,6 +51,9 @@ addresses: ## Show the external addresses of the application
 
 watch: ## Request the pages continuously and count the errors (run it during an update)
 	@scripts/watch.sh
+
+load: ## Load the pages to make the autoscalers add replicas (DURATION=180 CONCURRENCY=20)
+	@scripts/load.sh
 
 rebalance: ## Spread the replicas over the nodes again (done by start)
 	@scripts/rebalance.sh

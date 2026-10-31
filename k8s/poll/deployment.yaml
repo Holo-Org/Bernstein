@@ -3,7 +3,8 @@ kind: Deployment
 metadata:
   name: poll
 spec:
-  replicas: 2
+  # No `replicas`: the HorizontalPodAutoscaler (hpa.yaml) sets it, and a value here would reset
+  # it to 2 on every deployment, even under load.
   # No downtime during an update: a new pod must be ready before an old one is removed.
   strategy:
     type: RollingUpdate
