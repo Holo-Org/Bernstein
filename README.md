@@ -139,12 +139,13 @@ a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting
 | `start`      | Start the AKS cluster and fetch its kubectl credentials            |
 | `stop`       | Stop the AKS cluster, so it no longer uses credits                 |
 | `credentials`| Point kubectl to the AKS cluster                                   |
-| `status`     | Show the cluster power state and the application pods              |
+| `status`     | Show the cluster power state, the application pods and autoscalers |
 | `build-push` | Build and push the images (`SERVICES="poll worker"` for a subset)  |
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
 | `addresses`  | Show the external addresses of the application                     |
 | `watch`      | Request the pages continuously and count the errors                |
+| `load`       | Load the pages to make the autoscalers add replicas                |
 | `rebalance`  | Spread the replicas over the nodes again (run by `start`)          |
 
 ### Build and push (`scripts/build-push.sh`)
@@ -192,7 +193,8 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 
 ### Poll
 
-- `Deployment` with 2 replicas spread over the nodes, exposed by a `LoadBalancer` Service.
+- `Deployment` with 2 to 4 replicas (see [Auto-scaling](#auto-scaling)) spread over the nodes,
+  exposed by a `LoadBalancer` Service.
 - **No-downtime updates**: `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1`, a
   readiness probe (`/readyz`, which checks Redis) so a pod only receives traffic once ready,
   and a `preStop` delay so a terminating pod keeps serving while the load balancer forgets it.
@@ -213,9 +215,9 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 
 ### Result
 
-- `Deployment` with 2 replicas spread over the nodes, exposed by a `LoadBalancer` Service, with
-  the same no-downtime setup as Poll: `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`),
-  readiness probe on `/readyz` (checks PostgreSQL), `preStop` delay and a `PodDisruptionBudget`.
+- `Deployment` with 2 to 4 replicas (see [Auto-scaling](#auto-scaling)) spread over the nodes,
+  exposed by a `LoadBalancer` Service, with the same no-downtime setup as Poll:
+  `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`), readiness probe on `/readyz` (checks PostgreSQL), `preStop` delay and a `PodDisruptionBudget`.
 - **Sticky sessions** (`sessionAffinity: ClientIP`): the browser talks to Socket.IO with HTTP
   long-polling only (`transports: ['polling']`), and each request carries a session id known by
   a single pod. AKS turns this setting into a `SourceIP` distribution on the Azure load balancer
@@ -317,6 +319,45 @@ Redis and PostgreSQL have no affinity: a single replica has nothing to spread, a
 PostgreSQL disk can follow its pod to any node (no availability zones). There is no
 `nodeAffinity` either: the cluster has a single pool of identical nodes.
 
+### Auto-scaling
+
+Poll and result each have a `HorizontalPodAutoscaler` (`k8s/poll/hpa.yaml`,
+`k8s/result/hpa.yaml`), fed by the metrics-server that AKS installs:
+
+- **2 to 4 replicas**, to keep the **average CPU at 70 % of the request** (50m, so about 35m per
+  pod). Never below 2: one replica per node, as the `PodDisruptionBudget`s expect. At most 4:
+  the CPU requests of 4 poll and 4 result pods still fit on the 2 nodes next to the other pods
+  and the AKS system pods, and the spread constraints place them 2 + 2.
+- **No `replicas` in their Deployments**: the autoscaler sets it, and a value in the manifest
+  would bring it back to 2 on every `make deploy`, even under load. When this change was first
+  deployed, both Deployments went from 2 to 1 replica (the default) for a few seconds, until
+  their autoscaler restored the minimum; `make watch` saw no error.
+- **Slow scale-down** (`behavior.scaleDown`): the autoscaler waits for 5 minutes of lower load,
+  then removes at most one pod per minute. A short dip does not remove capacity, and the
+  Socket.IO clients of a removed result pod reconnect a few at a time.
+- **The worker is not autoscaled**: a vote costs it one Redis pop and one insert, so 2 workers
+  keep up with far more votes than poll can receive, and its CPU would not show a backlog
+  anyway. The right metric would be the length of the Redis list, which needs an external
+  metrics adapter such as [KEDA](https://keda.sh). Redis and PostgreSQL keep a single replica
+  (see above), and the number of nodes is fixed by the vCPU quota (no cluster autoscaler).
+
+To see it work, run `kubectl get hpa,pods --namespace bernstein --watch` in a terminal, then
+`make load` in another one (`DURATION` seconds, 180 by default, with `CONCURRENCY` requests at
+a time per page, 20 by default). `scripts/load.sh` uses a single `curl` per page with parallel,
+reused connections, so it needs no load-testing tool. Two effects of a single load source:
+
+- Its connections stay open, so they stay on the pods they reached first: the new poll pods
+  get little of this load, while new visitors would be spread over all of them.
+- Result keeps each client IP on the same pod (`sessionAffinity: ClientIP`), so all the load
+  goes to one pod. The average still rises and the autoscaler adds pods for the other clients.
+
+Measured on AKS with `make load` (about 540 requests per second on each page): within about
+70 seconds, both autoscalers went from 2 to 4 replicas (poll at 436 % of its request, result at
+209 %), placed 2 + 2 on the nodes, and `make watch` saw no error (558 requests on each page).
+The cluster was then stopped at 4 replicas; after a restart, without load, the autoscalers went
+back to 3, then to 2 a minute later, still one per node (the ReplicaSet removes first the pods
+of the node that runs the most), with no error either (454 requests on each page).
+
 ### Security
 
 All containers run as non-root, with a read-only root filesystem, no privilege escalation,
@@ -355,6 +396,7 @@ scripts/
   build-push.sh           build and push the images to the registry
   deploy.sh               create the Secrets and apply the manifests
   watch.sh                request the pages continuously during an update
+  load.sh                 load the pages to make the autoscalers add replicas
   rebalance.sh            spread the replicas over the nodes again (after a start)
 k8s/                      Kustomize manifests, namespace `bernstein`, one directory per component
   kustomization.yaml      namespace, common label, list of the components
