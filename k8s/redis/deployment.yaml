@@ -26,7 +26,11 @@ spec:
         - name: redis
           image: redis:8.2-alpine
           # Redis is only a transit queue (the worker empties it continuously): no persistence.
-          args: ["--requirepass", "$(REDIS_PASSWORD)", "--save", "", "--appendonly", "no"]
+          # If the workers stop, the queue grows: past 100MB (about a million votes, below the
+          # memory limit), Redis refuses new votes (default noeviction policy) rather than being
+          # killed by the limit and losing the queued ones.
+          args: ["--requirepass", "$(REDIS_PASSWORD)", "--save", "", "--appendonly", "no",
+                 "--maxmemory", "100mb"]
           env:
             - name: REDIS_PASSWORD
               valueFrom:
