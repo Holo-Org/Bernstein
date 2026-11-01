@@ -104,7 +104,8 @@ Nothing secret is committed. Two kinds of credentials are needed:
    `make credentials` (or `make start`) writes them in `~/.kube/config` with
    `az aks get-credentials`, from the Azure login.
 2. **Application secrets**: read from the environment, or from a `.env` file at the root of
-   the repository (ignored by git). Variables already set in the environment take precedence.
+   the repository (ignored by `.gitignore`). Variables already set in the environment take
+   precedence.
 
    ```sh
    cp .env.example .env   # then fill it in
@@ -450,6 +451,7 @@ make deploy
 ```
 Makefile                  entry points (make help)
 .env.example              template of the local settings and secrets (.env is never committed)
+.gitignore                ignores .env and the temporary overlay of deploy.sh
 scripts/
   lib.sh                  shared helpers (.env loading, registry name, image tags)
   build-push.sh           build and push the images to the registry
