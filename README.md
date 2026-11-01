@@ -19,7 +19,7 @@ Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster at
 Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
 
 ```sh
-git clone <this repository> && cd bernstein
+git clone https://github.com/Holo-Org/Bernstein.git bernstein && cd bernstein
 az login                                    # your Azure account (see Credentials and secrets)
 az account set --subscription <subscription-id>
 cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
@@ -33,6 +33,8 @@ make addresses                              # poll: http://<ip>, result: http://
   `credentials`, `status`), or `make credentials` fails on a resource group you cannot access.
   `make build-push`, `make deploy` and `make all` need no cluster name: they use the registry
   of `.env` (or the only one of the subscription) and the current `kubectl` context.
+- If the cluster is stopped, run `make start` (with the same variables) instead of
+  `make credentials`: it starts the cluster, then fetches its credentials.
 - If the subscription has several registries, also set `ACR_NAME` in `.env`.
 - The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
   IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
@@ -133,8 +135,10 @@ make addresses    # show the external addresses
 
 The cluster defaults to ours; for another one, pass its name to every Azure target, e.g.
 `make start AKS_RESOURCE_GROUP=<rg> AKS_CLUSTER=<name>`. `deploy.sh` itself targets the current
-`kubectl` context, and `make start` waits until the cluster runs but the API server name may take
-a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting)).
+`kubectl` context. Starting a stopped cluster takes about 5 minutes: `make start` then waits until
+the API server answers reliably (its DNS name only resolves some of the time for a few minutes)
+and every node is ready, and spreads the pods over the nodes again (see
+[Scheduling and affinity](#scheduling-and-affinity)).
 
 | Target       | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
