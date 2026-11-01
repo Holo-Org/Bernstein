@@ -88,7 +88,10 @@ az aks update --resource-group bernstein-rg --name bernstein-aks --attach-acr <r
 
 ## Requirements
 
-- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make`, `bash` 4+ and `curl`.
+- `az` (Azure CLI), logged in, `kubectl`, `docker` with BuildKit (`docker buildx`), `make`,
+  `bash` 4+, `curl` and GNU coreutils (`sha256sum`, `timeout`; `brew install coreutils` on
+  macOS). On an ARM machine, building the `linux/amd64` images also needs QEMU emulation
+  (included in Docker Desktop).
 - An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
 - **Azure permissions**: `Contributor` on the resource group of the cluster and the registry
   (to push the images, fetch the cluster credentials, start and stop the cluster). Attaching
@@ -171,6 +174,13 @@ and every node is ready, and spreads the pods over the nodes again (see
 - Each image is tagged with a hash of its sources: the same sources always give the same tag,
   and an image already in the registry is not rebuilt (`FORCE=1` to override).
 - Images are built for `linux/amd64` (the node architecture), whatever the local machine.
+- Older tags stay in the registry (a rollback only needs `kubectl rollout undo`). To list them,
+  and delete one that no pod uses (the index, its image and its attestation go together):
+
+  ```sh
+  az acr manifest list-metadata --registry <registry> --name poll -o table
+  az acr repository delete --name <registry> --image poll:<tag>
+  ```
 
 ### Deploy (`scripts/deploy.sh`)
 
@@ -449,6 +459,7 @@ explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix
 | `kubectl` or `make deploy` fails with `no such host` on the API server | The cluster is stopped (`make start`), or has just started: its DNS name only resolves some of the time for a few minutes. `make start` waits for it (`scripts/rebalance.sh`); otherwise wait and retry. |
 | `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
 | `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
+| `make deploy` reports `statefulset.apps/postgres` and the `poddisruptionbudget`s as `configured` although nothing changed | Harmless: client-side `kubectl apply` compares with the fields the API server fills in by default. Nothing is updated nor restarted (the `generation` of the objects does not change). |
 | `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
 | `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
 | Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
