@@ -74,6 +74,7 @@ What happens to the data:
 | Built for `linux/amd64` | The node architecture, whatever the machine running the build. |
 | `deploy.sh` checks the registry before touching the cluster | Every image must be in the registry, rather than leaving pods stuck in `ImagePullBackOff`. |
 | Temporary Kustomize overlay for the images | The committed manifests never change: the script injects the registry and the tag. |
+| Base images kept as provided (`python:3.14-slim`, `node:24-slim`, Temurin 25), `redis:8.2-alpine`, `postgres:18` | The application Dockerfiles are the provided ones, unchanged. The major versions are pinned, which is what matters for compatibility (PostgreSQL's data format changes with the major version), while the patch versions keep receiving security fixes. Pinning patch versions or digests would make builds fully reproducible, at the cost of updating them by hand. |
 
 ## 4. No-downtime update
 
@@ -266,6 +267,7 @@ a few milliseconds: the application has no acknowledgement mechanism.
 | Redis persistence | Redis is a transit queue (section 2). |
 | PostgreSQL high availability | An operator or a managed service (Azure Database for PostgreSQL) would be the production answer, but it is out of proportion here and costs credits. |
 | Helm, CI/CD | The scripts and Kustomize are enough: clone the repository, fill in `.env`, run `make all`. |
+| Skaffold | Its `inputDigest` tagger and Kustomize deployer would replace `build-push.sh` and `deploy.sh`, but not the Secrets, `watch`, `load` nor `rebalance`: one more tool to install for the same result. |
 | NetworkPolicies, monitoring | Not done. |
 | Availability zones | Not enabled on the node pool, which is also what lets the PostgreSQL disk follow its pod to any node. |
 

@@ -19,7 +19,7 @@ Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster at
 Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
 
 ```sh
-git clone <this repository> && cd bernstein
+git clone https://github.com/Holo-Org/Bernstein.git bernstein && cd bernstein
 az login                                    # your Azure account (see Credentials and secrets)
 az account set --subscription <subscription-id>
 cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
@@ -33,6 +33,8 @@ make addresses                              # poll: http://<ip>, result: http://
   `credentials`, `status`), or `make credentials` fails on a resource group you cannot access.
   `make build-push`, `make deploy` and `make all` need no cluster name: they use the registry
   of `.env` (or the only one of the subscription) and the current `kubectl` context.
+- If the cluster is stopped, run `make start` (with the same variables) instead of
+  `make credentials`: it starts the cluster, then fetches its credentials.
 - If the subscription has several registries, also set `ACR_NAME` in `.env`.
 - The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
   IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
@@ -86,7 +88,10 @@ az aks update --resource-group bernstein-rg --name bernstein-aks --attach-acr <r
 
 ## Requirements
 
-- `az` (Azure CLI), logged in, `kubectl`, `docker`, `make`, `bash` 4+ and `curl`.
+- `az` (Azure CLI), logged in, `kubectl`, `docker` with BuildKit (`docker buildx`), `make`,
+  `bash` 4+, `curl` and GNU coreutils (`sha256sum`, `timeout`; `brew install coreutils` on
+  macOS). On an ARM machine, building the `linux/amd64` images also needs QEMU emulation
+  (included in Docker Desktop).
 - An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
 - **Azure permissions**: `Contributor` on the resource group of the cluster and the registry
   (to push the images, fetch the cluster credentials, start and stop the cluster). Attaching
@@ -123,6 +128,18 @@ Nothing secret is committed. Two kinds of credentials are needed:
    `POSTGRES_PASSWORD` is only applied when the database is created (first start on an empty
    volume). To change it afterwards, also run `ALTER USER poll PASSWORD '...'` in the database.
 
+   **To redeploy an existing installation**, reuse its passwords: a new `POSTGRES_PASSWORD`
+   breaks the worker and result. With access to the cluster, create `.env` from the Secrets
+   instead (the passwords are neither printed nor put on a command line):
+
+   ```sh
+   grep -v '_PASSWORD=' .env.example > .env
+   for name in redis postgres; do
+     printf '%s_PASSWORD=%s\n' "$(echo "$name" | tr a-z A-Z)" \
+       "$(kubectl get secret "$name" --namespace bernstein -o jsonpath='{.data.password}' | base64 -d)" >> .env
+   done
+   ```
+
 ## Deployment
 
 ```sh
@@ -133,8 +150,10 @@ make addresses    # show the external addresses
 
 The cluster defaults to ours; for another one, pass its name to every Azure target, e.g.
 `make start AKS_RESOURCE_GROUP=<rg> AKS_CLUSTER=<name>`. `deploy.sh` itself targets the current
-`kubectl` context, and `make start` waits until the cluster runs but the API server name may take
-a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting)).
+`kubectl` context. Starting a stopped cluster takes about 5 minutes: `make start` then waits until
+the API server answers reliably (its DNS name only resolves some of the time for a few minutes)
+and every node is ready, and spreads the pods over the nodes again (see
+[Scheduling and affinity](#scheduling-and-affinity)).
 
 | Target       | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
@@ -155,6 +174,13 @@ a minute or two to resolve after a start (see [Troubleshooting](#troubleshooting
 - Each image is tagged with a hash of its sources: the same sources always give the same tag,
   and an image already in the registry is not rebuilt (`FORCE=1` to override).
 - Images are built for `linux/amd64` (the node architecture), whatever the local machine.
+- Older tags stay in the registry (a rollback only needs `kubectl rollout undo`). To list them,
+  and delete one that no pod uses (the index, its image and its attestation go together):
+
+  ```sh
+  az acr manifest list-metadata --registry <registry> --name poll -o table
+  az acr repository delete --name <registry> --image poll:<tag>
+  ```
 
 ### Deploy (`scripts/deploy.sh`)
 
@@ -433,6 +459,7 @@ explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix
 | `kubectl` or `make deploy` fails with `no such host` on the API server | The cluster is stopped (`make start`), or has just started: its DNS name only resolves some of the time for a few minutes. `make start` waits for it (`scripts/rebalance.sh`); otherwise wait and retry. |
 | `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
 | `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
+| `make deploy` reports `statefulset.apps/postgres` and the `poddisruptionbudget`s as `configured` although nothing changed | Harmless: client-side `kubectl apply` compares with the fields the API server fills in by default. Nothing is updated nor restarted (the `generation` of the objects does not change). |
 | `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
 | `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
 | Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
