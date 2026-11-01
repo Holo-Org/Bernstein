@@ -1,7 +1,9 @@
+# shellcheck shell=bash
 # Shared helpers, sourced by the other scripts.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/poll-application"
+# shellcheck disable=SC2034 # used by the scripts that source this file
 SERVICES=(poll worker result)
 
 # Local settings (ACR_NAME, POSTGRES_PASSWORD...), never committed: see .env.example.
@@ -43,7 +45,7 @@ require_env() {
 image_tag() {
   local dir="$APP_DIR/$1"
   (
-    cd "$dir"
+    cd "$dir" || exit 1
     find . -type f \
       -not -path './node_modules/*' -not -path './target/*' \
       -not -path './.venv/*' -not -path '*/__pycache__/*' -not -name '*.pyc' \

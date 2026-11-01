@@ -8,6 +8,7 @@
 # An image whose tag already exists in the registry is not rebuilt (set FORCE=1 to override).
 set -euo pipefail
 
+# shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 resolve_acr_name
