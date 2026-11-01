@@ -17,24 +17,35 @@ one section per evaluation criterion (replicas, restart policies, resource limit
 
 Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster attached to an Azure
 Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
+The cluster needs:
+
+- **x86_64 (`amd64`) nodes**: the images are built for `linux/amd64`, an ARM node pool cannot run
+  them.
+- **Kubernetes 1.27 or later** (`matchLabelKeys`, PVC retention policy): every supported AKS
+  version qualifies. The default AKS StorageClass and `LoadBalancer` Services are used as is.
+- **Room for the application**: up to 650m of CPU and 1.3Gi of memory requested, with the
+  autoscalers at their maximum (tested on 2 × `Standard_B2s_v2`, see [Resources](#resources)).
 
 ```sh
 git clone https://github.com/Holo-Org/Bernstein.git bernstein && cd bernstein
 az login                                    # your Azure account (see Credentials and secrets)
 az account set --subscription <subscription-id>
 cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
-make credentials AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
+export AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
+make credentials                            # or `make start` if the cluster is stopped
 make all                                    # build and push the images, then deploy
 make addresses                              # poll: http://<ip>, result: http://<ip>
 ```
 
-- **The Makefile defaults to our cluster** (`bernstein-rg` / `bernstein-aks`): always pass
-  `AKS_RESOURCE_GROUP` and `AKS_CLUSTER` to the targets that use Azure (`start`, `stop`,
-  `credentials`, `status`), or `make credentials` fails on a resource group you cannot access.
-  `make build-push`, `make deploy` and `make all` need no cluster name: they use the registry
-  of `.env` (or the only one of the subscription) and the current `kubectl` context.
-- If the cluster is stopped, run `make start` (with the same variables) instead of
-  `make credentials`: it starts the cluster, then fetches its credentials.
+- **The Makefile defaults to our cluster** (`bernstein-rg` / `bernstein-aks`): export
+  `AKS_RESOURCE_GROUP` and `AKS_CLUSTER` (or pass them to each command) for the targets that use
+  Azure (`start`, `stop`, `credentials`, `status`), or they fail on a resource group you cannot
+  access. `make build-push`, `make deploy` and `make all` need no cluster name: they use the
+  registry of `.env` (or the only one of the subscription) and the current `kubectl` context.
+- If the cluster uses Microsoft Entra ID authentication, `kubectl` also needs `kubelogin`
+  (`az aks install-cli`, then `kubelogin convert-kubeconfig -l azurecli`).
+- If the cluster is stopped, run `make start` instead of `make credentials`: it starts the
+  cluster, then fetches its credentials.
 - If the subscription has several registries, also set `ACR_NAME` in `.env`.
 - The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
   IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
@@ -173,6 +184,9 @@ and every node is ready, and spreads the pods over the nodes again (see
 
 - Each image is tagged with a hash of its sources: the same sources always give the same tag,
   and an image already in the registry is not rebuilt (`FORCE=1` to override).
+- `FORCE=1` rebuilds and pushes the same tag again: nodes that already have the image keep their
+  cached copy (`imagePullPolicy: IfNotPresent`, the default for a fixed tag). It is only meant
+  to show the build: the sources, hence the content, are the same.
 - Images are built for `linux/amd64` (the node architecture), whatever the local machine.
 - Older tags stay in the registry (a rollback only needs `kubectl rollout undo`). To list them,
   and delete one that no pod uses (the index, its image and its attestation go together):
