@@ -25,7 +25,7 @@ else
     -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name} {.status.loadBalancer.ingress[0].ip}{"\n"}{end}')
   [[ ${#urls[@]} -gt 0 ]] || { echo "error: no LoadBalancer service in namespace $NAMESPACE" >&2; exit 1; }
 fi
-names=($(printf '%s\n' "${!urls[@]}" | sort))
+mapfile -t names < <(printf '%s\n' "${!urls[@]}" | sort)
 for name in "${names[@]}"; do
   ok[$name]=0 errors[$name]=0
   [[ "$name" == "${urls[$name]}" ]] && echo "==> Watching $name" || echo "==> Watching $name: ${urls[$name]}"

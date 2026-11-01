@@ -8,6 +8,7 @@
 # Secrets come from the environment (or .env): REDIS_PASSWORD, POSTGRES_PASSWORD.
 set -euo pipefail
 
+# shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 NAMESPACE=bernstein # must match k8s/kustomization.yaml
