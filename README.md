@@ -125,6 +125,18 @@ Nothing secret is committed. Two kinds of credentials are needed:
    `POSTGRES_PASSWORD` is only applied when the database is created (first start on an empty
    volume). To change it afterwards, also run `ALTER USER poll PASSWORD '...'` in the database.
 
+   **To redeploy an existing installation**, reuse its passwords: a new `POSTGRES_PASSWORD`
+   breaks the worker and result. With access to the cluster, create `.env` from the Secrets
+   instead (the passwords are neither printed nor put on a command line):
+
+   ```sh
+   grep -v '_PASSWORD=' .env.example > .env
+   for name in redis postgres; do
+     printf '%s_PASSWORD=%s\n' "$(echo "$name" | tr a-z A-Z)" \
+       "$(kubectl get secret "$name" --namespace bernstein -o jsonpath='{.data.password}' | base64 -d)" >> .env
+   done
+   ```
+
 ## Deployment
 
 ```sh
