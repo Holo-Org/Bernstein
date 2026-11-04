@@ -48,7 +48,7 @@ trap 'rm -rf "$overlay"' EXIT
   echo "resources: [../k8s]"
   echo "images:"
   for service in "${SERVICES[@]}"; do
-    echo "  - {name: $service, newName: $ACR_NAME.azurecr.io/$service, newTag: $(image_tag "$service")}"
+    echo "  - {name: $service, newName: $ACR_NAME.azurecr.io/$service, newTag: \"$(image_tag "$service")\"}"
   done
 } > "$overlay/kustomization.yaml"
 
