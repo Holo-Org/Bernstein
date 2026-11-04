@@ -2,8 +2,7 @@
 
 Deployment process of the Poll application, from its sources to a Kubernetes cluster:
 build the images, push them to a private registry and deploy them with no-downtime updates.
-The reasons behind each choice are in [docs/technical-choices.md](docs/technical-choices.md),
-one section per evaluation criterion (replicas, restart policies, resource limits, ports, ...).
+The reasons behind each choice are in [docs/technical-choices.md](docs/technical-choices.md).
 
 | Component | Source                    | Image                     | Status       |
 | --------- | ------------------------- | ------------------------- | ------------ |
@@ -15,9 +14,9 @@ one section per evaluation criterion (replicas, restart policies, resource limit
 
 ## Quick start (deploy from scratch on your own cluster)
 
-Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster attached to an Azure
-Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
-The cluster needs:
+Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster (see
+[Create the infrastructure](#create-the-infrastructure) to create one). `make registry` creates
+the private registry it needs. The cluster needs:
 
 - **x86_64 (`amd64`) nodes**: the images are built for `linux/amd64`, an ARM node pool cannot run
   them.
@@ -30,9 +29,10 @@ The cluster needs:
 git clone https://github.com/Holo-Org/Bernstein.git bernstein && cd bernstein
 az login                                    # your Azure account (see Credentials and secrets)
 az account set --subscription <subscription-id>
-cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
+cp .env.example .env                        # choose ACR_NAME, REDIS_PASSWORD and POSTGRES_PASSWORD
 export AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
 make credentials                            # or `make start` if the cluster is stopped
+make registry                               # create the registry and attach it to the cluster
 make all                                    # build and push the images, then deploy
 make addresses                              # poll: http://<ip>, result: http://<ip>
 ```
@@ -46,7 +46,10 @@ make addresses                              # poll: http://<ip>, result: http://
   (`az aks install-cli`, then `kubelogin convert-kubeconfig -l azurecli`).
 - If the cluster is stopped, run `make start` instead of `make credentials`: it starts the
   cluster, then fetches its credentials.
-- If the subscription has several registries, also set `ACR_NAME` in `.env`.
+- `ACR_NAME` must be globally unique if `make registry` creates the registry. It can stay empty
+  when the subscription has exactly one registry, which is then used. Attaching the registry
+  needs `Owner` on it (see [Requirements](#requirements)); skip `make registry` if the cluster is
+  already attached to one.
 - The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
   IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
 - To check a no-downtime update: `make watch` in a terminal, change the sources of poll or
@@ -70,6 +73,9 @@ node image) always adds a temporary surge node: the pool uses `maxSurge: 1`.
 - With 3 nodes, the surge node would need 8 vCPUs and the upgrade would fail on the quota.
   A third node therefore requires a quota increase.
 
+AKS documents system node pools as needing 4 vCPUs and excludes the B-series. This cluster runs
+anyway, and the quota could not hold two compliant nodes: a known deviation, accepted here.
+
 During a drain, the 2 Poll, Worker and Result replicas (one per node) and their
 `PodDisruptionBudget`s keep the application available.
 
@@ -87,7 +93,13 @@ az aks create --resource-group bernstein-rg --name bernstein-aks --tier free \
   --attach-acr <registry> --generate-ssh-keys
 az aks nodepool update --resource-group bernstein-rg --cluster-name bernstein-aks \
   --name nodepool1 --max-surge 1
+az aks maintenanceconfiguration add --resource-group bernstein-rg --cluster-name bernstein-aks \
+  --name aksManagedNodeOSUpgradeSchedule --schedule-type Weekly --day-of-week Sunday \
+  --interval-weeks 1 --duration 4 --utc-offset +01:00 --start-time 02:00
 ```
+
+The `NodeImage` channel replaces the nodes every week, which drains them. The maintenance window
+keeps this to Sunday night, best effort, instead of whenever a new image reaches the region.
 
 `--attach-acr` gives the cluster nodes the `AcrPull` role on the registry. To check it, or to
 restore it on an existing cluster:
@@ -103,11 +115,11 @@ az aks update --resource-group bernstein-rg --name bernstein-aks --attach-acr <r
   `bash` 4+, `curl` and GNU coreutils (`sha256sum`, `timeout`; `brew install coreutils` on
   macOS). On an ARM machine, building the `linux/amd64` images also needs QEMU emulation
   (included in Docker Desktop).
-- An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
+- An AKS cluster. `make registry` creates the registry if needed and attaches it to the cluster.
 - **Azure permissions**: `Contributor` on the resource group of the cluster and the registry
-  (to push the images, fetch the cluster credentials, start and stop the cluster). Attaching
-  the registry to the cluster (`--attach-acr`) creates a role assignment, so it also needs
-  `Owner` (or `User Access Administrator`) on the registry.
+  (to create the registry, push the images, fetch the cluster credentials, start and stop the
+  cluster). Attaching the registry to the cluster (`make registry`) creates a role assignment,
+  so it also needs `Owner` (or `User Access Administrator`) on the registry.
 
 ## Credentials and secrets
 
@@ -169,8 +181,9 @@ and every node is ready, and spreads the pods over the nodes again (see
 | Target       | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
 | `start`      | Start the AKS cluster and fetch its kubectl credentials            |
-| `stop`       | Stop the AKS cluster, so it no longer uses credits                 |
+| `stop`       | Stop the AKS cluster, to save the cost of its nodes                |
 | `credentials`| Point kubectl to the AKS cluster                                   |
+| `registry`   | Create the registry (if missing) and attach it to the cluster      |
 | `status`     | Show the cluster power state, the application pods and autoscalers |
 | `build-push` | Build and push the images (`SERVICES="poll worker"` for a subset)  |
 | `deploy`     | Deploy the application to the cluster                              |
@@ -204,9 +217,9 @@ and every node is ready, and spreads the pods over the nodes again (see
 3. Applies the manifests of `k8s/` (Kustomize) through a temporary overlay that points each
    image to the registry with the tag of its current sources. Only the services whose sources
    changed get a new tag, so only they are rolled out.
-   The build uses `--load-restrictor LoadRestrictionsNone`, because `k8s/postgres` reads
-   `poll-application/schema.sql` outside its directory (to render the manifests by hand:
-   `kubectl kustomize --load-restrictor LoadRestrictionsNone k8s`).
+   The overlay also generates the `postgres-schema` ConfigMap from a copy of
+   `poll-application/schema.sql`, as Kustomize only loads the files below the kustomization that
+   names them (to render everything else by hand: `kubectl kustomize k8s`).
 4. Waits for the rollouts and prints the external addresses.
 
 ### No-downtime update (`scripts/watch.sh`)
@@ -228,6 +241,19 @@ any request failed. URLs can also be given: `scripts/watch.sh http://<ip>/`.
 
 Measured on AKS while changing poll's sources and running `make all`: 688 requests on poll and
 687 on result, 0 errors; the new pods took over within the rollout.
+
+### Drain a node
+
+```sh
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+kubectl uncordon <node>
+make rebalance
+```
+
+Both flags are needed: AKS runs DaemonSets on every node, and Poll, Redis and PostgreSQL use
+`emptyDir` volumes, whose content is disposable. Without them, the drain refuses to start and
+leaves the node cordoned, so `kubectl uncordon <node>` is needed either way. `make rebalance` then
+spreads the replicas again, as nothing moves a running pod.
 
 ## Kubernetes resources
 
@@ -280,7 +306,8 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 
 - `Deployment` with 2 replicas spread over the nodes. Both pop the same Redis list (`BLPOP`
   hands each vote to a single worker), so votes keep being processed while a node is drained
-  or lost. No Service: its port 80 only serves the health endpoints.
+  or lost, but two quick votes from one voter can be stored in either order. No Service: its
+  port 80 only serves the health endpoints.
 - **Updates**: `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1`. The readiness probe
   (`/readyz`) checks Redis and PostgreSQL, so an old worker is only stopped once the new one is
   connected to both. A `PodDisruptionBudget` (`minAvailable: 1`) keeps one worker during a drain.
@@ -303,8 +330,8 @@ Everything lives in the `bernstein` namespace (`k8s/`).
   mounted on `/var/lib/postgresql`. Since PostgreSQL 18, the image stores its data in
   `/var/lib/postgresql/18/docker` (`PGDATA`) and the volume is mounted on the parent directory.
 - **Schema**: `poll-application/schema.sql` is turned into the `postgres-schema` ConfigMap by
-  Kustomize (no copy) and mounted in `/docker-entrypoint-initdb.d`: the image applies it when it
-  creates the database, i.e. only on an empty volume.
+  the overlay of `deploy.sh` and mounted in `/docker-entrypoint-initdb.d`: the image applies it
+  when it creates the database, i.e. only on an empty volume.
 - **Configuration**: the `postgres` ConfigMap holds the connection settings shared with the
   worker and result (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`); the
   password comes from the `postgres` Secret (key `password`).
@@ -439,7 +466,7 @@ the CPU limit), read with `kubectl exec`.
   worker's request also covers the heap the JVM may grow to (it sizes it from the memory limit:
   at most 126Mi with 256Mi), and PostgreSQL's the 128MB of `shared_buffers` once the data
   outgrows them (9.5MB today). Poll's request went from 96Mi to 128Mi after its 97Mi peak.
-- **Memory limits at about twice the peak**: room for spikes, while a leak only gets its own
+- **Memory limits at least twice the peak**: room for spikes, while a leak only gets its own
   container killed (`OOMKilled`, then restarted) instead of starving the node.
 - **CPU requests at the usual usage**: what the scheduler reserves on the node, and the base of
   the autoscalers' target (70 % of 50m). Under load, poll and result use more than their request
@@ -474,7 +501,7 @@ explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix
 | `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
 | `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
 | `make deploy` reports `statefulset.apps/postgres` and the `poddisruptionbudget`s as `configured` although nothing changed | Harmless: client-side `kubectl apply` compares with the fields the API server fills in by default. Nothing is updated nor restarted (the `generation` of the objects does not change). |
-| `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
+| `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`, then run `make registry` if it does not exist yet. |
 | `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
 | Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
 | An address shows `<pending>` | Azure is still creating the public IP: run `make addresses` again a minute later. |
@@ -495,6 +522,7 @@ Makefile                  entry points (make help)
 .gitignore                ignores .env and the temporary overlay of deploy.sh
 scripts/
   lib.sh                  shared helpers (.env loading, registry name, image tags)
+  registry.sh             create the registry and attach it to the cluster
   build-push.sh           build and push the images to the registry
   deploy.sh               create the Secrets and apply the manifests
   watch.sh                request the pages continuously during an update
@@ -514,5 +542,6 @@ docs/
 
 ## Cost management
 
-Stop the cluster when it is not used: `make stop` (and `make start` to resume). The vCPU quota
-is 6 per region: 2 nodes use 4, which keeps room for the surge node AKS adds during upgrades.
+Stop the cluster when it is not used: `make stop` (and `make start` to resume). This saves the
+compute; the registry and the public IPs and disks that stay allocated keep costing. The vCPU
+quota is 6 per region: 2 nodes use 4, which keeps room for the surge node AKS adds during upgrades.

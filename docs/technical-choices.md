@@ -2,24 +2,6 @@
 
 The decisions behind the deployment, and the ones we deliberately did not make.
 The README describes how to deploy; this document explains why it is done this way.
-Its sections follow the evaluation criteria of the project:
-
-| Criterion | Section |
-|---|---|
-| Application working | [1. Application](#1-application) |
-| Persistent data | [2. Persistent data](#2-persistent-data) |
-| Private Docker registry | [3. Private registry](#3-private-registry) |
-| No-downtime update | [4. No-downtime update](#4-no-downtime-update) |
-| Replicas | [5. Replicas](#5-replicas) |
-| Restart policies | [6. Restart policies](#6-restart-policies) |
-| Resource limits | [7. Resource requests and limits](#7-resource-requests-and-limits) |
-| Exposed ports | [8. Exposed ports](#8-exposed-ports) |
-| Affinity policies | [9. Scheduling and affinity](#9-scheduling-and-affinity) |
-| Number of nodes | [10. Number of nodes](#10-number-of-nodes) |
-| Probes | [11. Probes](#11-probes) |
-| Load balancers | [12. Load balancers](#12-load-balancers) |
-| Auto-scaling | [13. Auto-scaling](#13-auto-scaling) |
-| Documentation, repository structure | this document, the [README](../README.md), [14. Other choices](#14-other-choices) |
 
 ## 1. Application
 
@@ -50,7 +32,7 @@ All the components are deployed in the `bernstein` namespace, from the manifests
 | 1 GiB PVC (Azure disk, `default` StorageClass), kept (`persistentVolumeClaimRetentionPolicy: Retain`) | The subject requires persistent votes. The disk survives the deletion of the pod and of the StatefulSet. |
 | Volume mounted on `/var/lib/postgresql` | The new layout of the `postgres:18` image (`PGDATA` is `/var/lib/postgresql/18/docker`). |
 | `schema.sql` applied on startup, from a ConfigMap mounted in `/docker-entrypoint-initdb.d` | The schema is applied automatically, once, when the database is created. This ConfigMap has no hash suffix, so changing the schema does not restart the database for nothing. |
-| `--load-restrictor LoadRestrictionsNone` | Reads `schema.sql` straight from the application sources, rather than keeping a copy that could drift. |
+| `schema.sql` copied into the temporary overlay of `deploy.sh` | Kustomize only loads the files below the kustomization that names them. The copy lives for the time of the build, so it cannot drift from the application sources, and the build needs no `--load-restrictor` flag. |
 | An update means a short interruption | Voting is not affected (votes wait in Redis, and the worker puts the current vote back). The result page is unavailable for a few seconds. |
 | No Redis persistence | Redis is only a transit queue, emptied continuously by the worker: the votes are persisted in PostgreSQL. **Accepted consequence**: the votes waiting in the queue are lost if Redis restarts. |
 
@@ -74,7 +56,7 @@ What happens to the data:
 | Built for `linux/amd64` | The node architecture, whatever the machine running the build. |
 | `deploy.sh` checks the registry before touching the cluster | Every image must be in the registry, rather than leaving pods stuck in `ImagePullBackOff`. |
 | Temporary Kustomize overlay for the images | The committed manifests never change: the script injects the registry and the tag. |
-| Base images kept as provided (`python:3.14-slim`, `node:24-slim`, Temurin 25), `redis:8.2-alpine`, `postgres:18` | The application Dockerfiles are the provided ones, unchanged. The major versions are pinned, which is what matters for compatibility (PostgreSQL's data format changes with the major version), while the patch versions keep receiving security fixes. Pinning patch versions or digests would make builds fully reproducible, at the cost of updating them by hand. |
+| Base images kept as provided (`python:3.14-slim`, `node:24-slim`, Temurin 25), `redis:8.2-alpine`, `postgres:18` | The application Dockerfiles are the provided ones, unchanged. The major versions are pinned, which is what matters for compatibility (PostgreSQL's data format changes with the major version). **Accepted consequence**: a base image fix only arrives with a rebuild, and an image is only rebuilt when its sources change (`FORCE=1` reuses the tag, which the nodes keep in their cache). Redis and PostgreSQL stay on the copy cached on each node, so two nodes can run different patch versions. Pinning patch versions or digests would make builds fully reproducible, at the cost of updating them by hand. |
 
 ## 4. No-downtime update
 
@@ -93,7 +75,7 @@ What happens to the data:
 | Component | Replicas | Why |
 |---|---|---|
 | Poll, result | 2 to 4 (HPA, section 13) | Stateless: at least one per node, so that losing or draining a node keeps them up; more under load. |
-| Worker | 2 | Several workers can pop the same Redis list without duplicates (`BLPOP` hands each vote to a single worker), so votes keep being processed during a drain. 2 keep up with the load (section 13). |
+| Worker | 2 | Several workers can pop the same Redis list without duplicates (`BLPOP` hands each vote to a single worker), so votes keep being processed during a drain. 2 keep up with the load (section 13). **Accepted consequence**: nothing orders the two workers, so two quick votes from one voter can be stored in either order. |
 | Redis | 1, `Recreate` strategy | Two Redis pods at once would be two separate queues, and some votes would go to the one nobody reads. |
 | PostgreSQL | 1 | No built-in multi-writer replication (section 2). |
 
@@ -134,13 +116,13 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 |---|---|
 | Requests and limits on every container | Predictable scheduling, and no pod can starve the others. |
 | Memory requests above the measured peak | Memory cannot be taken back from a running process, and a pod above its request is the first one evicted when a node runs short. Poll's went from 96Mi to 128Mi after its 97Mi peak. The worker's covers the heap the JVM may grow to (sized from the limit: at most 126Mi), PostgreSQL's its 128MB of `shared_buffers`. |
-| Memory limits at about twice the peak | Room for spikes, while a leak only gets its own container killed and restarted instead of starving the node. |
+| Memory limits at least twice the peak | Room for spikes, while a leak only gets its own container killed and restarted instead of starving the node. Poll's is twice its peak; the worker's is sized for the JVM heap, Redis's for its `maxmemory`, PostgreSQL's for `shared_buffers`, and result's is a round 128Mi. |
 | CPU requests at the usual usage | What the scheduler reserves, and the base of the autoscalers' target. Under load, pods use the idle CPU of the node, and the autoscalers add pods rather than make them bigger. |
 | CPU limits kept | They cap a runaway container on 2-vCPU nodes shared with the AKS system pods. Above them, a container is throttled, not killed (seen in `cpu.stat` for the JVM's startup and short bursts). |
 | Redis CPU limit from 250m to 500m | Redis was throttled in bursts, while it is single-threaded and on the path of every vote. |
 | Redis `--maxmemory 100mb` (default `noeviction` policy) | If the workers stop, the queue grows: once full (about a million votes), Redis refuses new votes instead of being killed by its memory limit and losing the queued ones. Tested: new votes got an HTTP 500, the 469 queued votes were kept and processed once the workers were back. |
 | Burstable QoS (requests below limits) | `Guaranteed` would reserve the peak at all times, which 2 nodes cannot afford with 4 replicas of poll and result. |
-| It fits | At the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of memory out of 3.8 CPUs and 11Gi allocatable (1.9 CPUs requested in total with the AKS system pods). |
+| It fits | At the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of memory out of 3.8 CPUs and 11Gi allocatable (1.9 CPUs requested in total with the AKS system pods). The 3.8 CPUs are burst capacity: a `Standard_B2s_v2` guarantees 40 %, about 1.6 vCPUs for the pool, which is enough for a demonstration but not for a sustained load. |
 
 ## 8. Exposed ports
 
@@ -170,7 +152,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | `ScheduleAnyway` rather than `DoNotSchedule` or a required `podAntiAffinity` | On 2 nodes, a hard rule leaves a replica `Pending` during a drain or a node loss (the other node already runs one), and keeps the autoscaler from adding replicas. Two replicas on one node are better than one. |
 | `matchLabelKeys: ["pod-template-hash"]` | Only the pods of the same version are counted: otherwise, during a rollout, the old pods about to be removed attract the new ones to their node. |
 | `make start` rebalances the pods (`scripts/rebalance.sh`) | When the cluster starts, its nodes are not ready at the same time and every pod lands on the first one (observed: all 8 pods on one node). Kubernetes never moves a running pod, so the script restarts, with a no-downtime rollout, each Deployment whose replicas share fewer nodes than they could. Measured during a rebalance of poll: 369 requests on each page, 0 errors. |
-| No descheduler | It would rebalance continuously, but it is one more component to install and run; the cluster only becomes unbalanced when it starts. |
+| No descheduler | It would rebalance continuously, but it is one more component to install and run. A cluster start, a drain or an upgrade can all stack the replicas on one node, and `make rebalance` repairs it. |
 | No affinity for Redis and PostgreSQL | A single replica has nothing to spread, and the PostgreSQL disk can follow its pod to any node (no availability zones). |
 | No `nodeAffinity`, taints or tolerations | The cluster has a single pool of identical nodes. |
 
@@ -178,11 +160,11 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 
 | Choice | Why |
 |---|---|
-| 2 × `Standard_B2s_v2` (2 vCPUs, 8 GiB each) | The quota is 6 vCPUs per region. A system node pool keeps `maxUnavailable: 0`, so an AKS upgrade adds a surge node (`maxSurge: 1`) before draining an old one: 2 nodes plus the surge node use 6 vCPUs; 3 nodes would need 8 and the upgrade would fail. |
+| 2 × `Standard_B2s_v2` (2 vCPUs, 8 GiB each) | The quota is 6 vCPUs per region. A system node pool keeps `maxUnavailable: 0`, so an AKS upgrade adds a surge node (`maxSurge: 1`) before draining an old one: 2 nodes plus the surge node use 6 vCPUs; 3 nodes would need 8 and the upgrade would fail. **Known deviation**: AKS documents system node pools as needing 4 vCPUs and excludes the B-series. This cluster runs anyway, and the quota could not hold two compliant nodes. |
 | 2, not 1 | One node per replica: a drain, an upgrade or a node loss keeps every replicated service up. |
 | Enough capacity | At the autoscalers' maximum, everything requested fits on the 2 nodes (section 7). |
 | No cluster autoscaler | The quota leaves no room for a third node. |
-| `make start` and `make stop` | Cost management: the cluster is stopped whenever it is not used. |
+| `make start` and `make stop` | Cost management: the cluster is stopped whenever it is not used. This saves the compute; the registry and the public IPs and disks that stay allocated keep costing. |
 
 ## 11. Probes
 
@@ -236,6 +218,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | AKS (managed Kubernetes) | Recommended by the subject, and covered by the Azure for Students credits. Azure runs the control plane: nothing to install or maintain ourselves. |
 | Region `denmarkeast` | The subscription policy only allows 5 regions, and this is the only one offering B-series VMs for AKS. |
 | AKS Free tier | No cost for the control plane. The trade-off is no SLA, acceptable for this project. |
+| Node image updates on Sunday night (`aksManagedNodeOSUpgradeSchedule`) | The `NodeImage` channel is weekly and drains the nodes. Without a maintenance window it can start at any time, including during a demonstration; AKS treats the window as best effort. |
 
 **Deployment method**
 
@@ -268,14 +251,17 @@ a few milliseconds: the application has no acknowledgement mechanism.
 | PostgreSQL high availability | An operator or a managed service (Azure Database for PostgreSQL) would be the production answer, but it is out of proportion here and costs credits. |
 | Helm, CI/CD | The scripts and Kustomize are enough: clone the repository, fill in `.env`, run `make all`. |
 | Skaffold | Its `inputDigest` tagger and Kustomize deployer would replace `build-push.sh` and `deploy.sh`, but not the Secrets, `watch`, `load` nor `rebalance`: one more tool to install for the same result. |
-| NetworkPolicies, monitoring | Not done. |
+| NetworkPolicies | The cluster was created without a network policy engine (`--network-policy`), so the objects would not be enforced. Redis and PostgreSQL stay inside the cluster behind a password, and this namespace only runs this application. With other workloads around it, the next step would be an engine and one policy per backing store. |
+| Monitoring stack | `kubectl top`, `kubectl logs` and the cgroup readings of section 7 were enough to size the pods and follow the updates. Azure Monitor costs credits, and a Prometheus stack would be more to run than the application itself. |
+| Backups of the votes | They are demonstration data on one 1 GiB disk, which survives the pod and the StatefulSet but not the namespace (section 2). `kubectl exec --namespace bernstein postgres-0 -- pg_dump --username poll poll` is enough before a risky change. |
+| Schema migrations | `schema.sql` is only applied when the database is created (section 2), and the application has a single table. |
 | Availability zones | Not enabled on the node pool, which is also what lets the PostgreSQL disk follow its pod to any node. |
 
 ## What happens if...
 
 | Event | Effect |
 |---|---|
-| A node is drained | Poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). |
+| A node is drained | `kubectl drain` first refuses: it needs `--ignore-daemonsets --delete-emptydir-data`, and it leaves the node cordoned either way. Then poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). The replicas stay stacked on that node until `make rebalance`. |
 | A node is lost | Same as a drain, without the PDBs' protection: the pods are rescheduled once Kubernetes declares the node down (about 5 minutes, the default `not-ready`/`unreachable` toleration). |
 | Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. Measured when its configuration changed: back within seconds, before poll's readiness probe failed, so no page error. |
 | The workers stop | Votes wait in Redis. Past 100MB (about a million votes), new votes are refused (HTTP 500) and the queued ones are kept. |

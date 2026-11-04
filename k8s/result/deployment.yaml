@@ -19,6 +19,7 @@ spec:
       labels:
         app: result
     spec:
+      automountServiceAccountToken: false
       # Spread the replicas over the nodes, so losing (or draining) one node keeps result up.
       topologySpreadConstraints:
         - maxSkew: 1

@@ -22,6 +22,7 @@ spec:
       labels:
         app: postgres
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999 # `postgres` user of the image
@@ -55,19 +56,21 @@ spec:
               containerPort: 5432
           # Through TCP: during the first initialization, the image runs a temporary server
           # that only listens on its Unix socket, and it must not be seen as ready.
+          # Through a shell: the kubelet only expands literal env values in a probe command, so
+          # $(POSTGRES_USER) would be empty here, and each probe would log a failed connection.
           startupProbe:
             exec:
-              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             periodSeconds: 5
             failureThreshold: 30 # initdb or a crash recovery may take a while
           readinessProbe:
             exec:
-              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             periodSeconds: 5
             timeoutSeconds: 3
           livenessProbe:
             exec:
-              command: ["pg_isready", "-h", "127.0.0.1", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+              command: ["sh", "-c", 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
