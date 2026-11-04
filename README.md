@@ -290,7 +290,8 @@ Everything lives in the `bernstein` namespace (`k8s/`).
 
 - `Deployment` with 2 replicas spread over the nodes. Both pop the same Redis list (`BLPOP`
   hands each vote to a single worker), so votes keep being processed while a node is drained
-  or lost. No Service: its port 80 only serves the health endpoints.
+  or lost, but two quick votes from one voter can be stored in either order. No Service: its
+  port 80 only serves the health endpoints.
 - **Updates**: `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1`. The readiness probe
   (`/readyz`) checks Redis and PostgreSQL, so an old worker is only stopped once the new one is
   connected to both. A `PodDisruptionBudget` (`minAvailable: 1`) keeps one worker during a drain.

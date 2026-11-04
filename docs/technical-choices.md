@@ -75,7 +75,7 @@ What happens to the data:
 | Component | Replicas | Why |
 |---|---|---|
 | Poll, result | 2 to 4 (HPA, section 13) | Stateless: at least one per node, so that losing or draining a node keeps them up; more under load. |
-| Worker | 2 | Several workers can pop the same Redis list without duplicates (`BLPOP` hands each vote to a single worker), so votes keep being processed during a drain. 2 keep up with the load (section 13). |
+| Worker | 2 | Several workers can pop the same Redis list without duplicates (`BLPOP` hands each vote to a single worker), so votes keep being processed during a drain. 2 keep up with the load (section 13). **Accepted consequence**: nothing orders the two workers, so two quick votes from one voter can be stored in either order. |
 | Redis | 1, `Recreate` strategy | Two Redis pods at once would be two separate queues, and some votes would go to the one nobody reads. |
 | PostgreSQL | 1 | No built-in multi-writer replication (section 2). |
 
