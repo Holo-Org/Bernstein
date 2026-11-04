@@ -19,6 +19,7 @@ spec:
       labels:
         app: poll
     spec:
+      automountServiceAccountToken: false
       # Spread the replicas over the nodes, so losing (or draining) one node keeps poll up.
       topologySpreadConstraints:
         - maxSkew: 1
