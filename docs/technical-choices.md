@@ -56,7 +56,7 @@ What happens to the data:
 | Built for `linux/amd64` | The node architecture, whatever the machine running the build. |
 | `deploy.sh` checks the registry before touching the cluster | Every image must be in the registry, rather than leaving pods stuck in `ImagePullBackOff`. |
 | Temporary Kustomize overlay for the images | The committed manifests never change: the script injects the registry and the tag. |
-| Base images kept as provided (`python:3.14-slim`, `node:24-slim`, Temurin 25), `redis:8.2-alpine`, `postgres:18` | The application Dockerfiles are the provided ones, unchanged. The major versions are pinned, which is what matters for compatibility (PostgreSQL's data format changes with the major version), while the patch versions keep receiving security fixes. Pinning patch versions or digests would make builds fully reproducible, at the cost of updating them by hand. |
+| Base images kept as provided (`python:3.14-slim`, `node:24-slim`, Temurin 25), `redis:8.2-alpine`, `postgres:18` | The application Dockerfiles are the provided ones, unchanged. The major versions are pinned, which is what matters for compatibility (PostgreSQL's data format changes with the major version). **Accepted consequence**: a base image fix only arrives with a rebuild, and an image is only rebuilt when its sources change (`FORCE=1` reuses the tag, which the nodes keep in their cache). Redis and PostgreSQL stay on the copy cached on each node, so two nodes can run different patch versions. Pinning patch versions or digests would make builds fully reproducible, at the cost of updating them by hand. |
 
 ## 4. No-downtime update
 
@@ -116,7 +116,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 |---|---|
 | Requests and limits on every container | Predictable scheduling, and no pod can starve the others. |
 | Memory requests above the measured peak | Memory cannot be taken back from a running process, and a pod above its request is the first one evicted when a node runs short. Poll's went from 96Mi to 128Mi after its 97Mi peak. The worker's covers the heap the JVM may grow to (sized from the limit: at most 126Mi), PostgreSQL's its 128MB of `shared_buffers`. |
-| Memory limits at about twice the peak | Room for spikes, while a leak only gets its own container killed and restarted instead of starving the node. |
+| Memory limits at least twice the peak | Room for spikes, while a leak only gets its own container killed and restarted instead of starving the node. Poll's is twice its peak; the worker's is sized for the JVM heap, Redis's for its `maxmemory`, PostgreSQL's for `shared_buffers`, and result's is a round 128Mi. |
 | CPU requests at the usual usage | What the scheduler reserves, and the base of the autoscalers' target. Under load, pods use the idle CPU of the node, and the autoscalers add pods rather than make them bigger. |
 | CPU limits kept | They cap a runaway container on 2-vCPU nodes shared with the AKS system pods. Above them, a container is throttled, not killed (seen in `cpu.stat` for the JVM's startup and short bursts). |
 | Redis CPU limit from 250m to 500m | Redis was throttled in bursts, while it is single-threaded and on the path of every vote. |
@@ -152,7 +152,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | `ScheduleAnyway` rather than `DoNotSchedule` or a required `podAntiAffinity` | On 2 nodes, a hard rule leaves a replica `Pending` during a drain or a node loss (the other node already runs one), and keeps the autoscaler from adding replicas. Two replicas on one node are better than one. |
 | `matchLabelKeys: ["pod-template-hash"]` | Only the pods of the same version are counted: otherwise, during a rollout, the old pods about to be removed attract the new ones to their node. |
 | `make start` rebalances the pods (`scripts/rebalance.sh`) | When the cluster starts, its nodes are not ready at the same time and every pod lands on the first one (observed: all 8 pods on one node). Kubernetes never moves a running pod, so the script restarts, with a no-downtime rollout, each Deployment whose replicas share fewer nodes than they could. Measured during a rebalance of poll: 369 requests on each page, 0 errors. |
-| No descheduler | It would rebalance continuously, but it is one more component to install and run; the cluster only becomes unbalanced when it starts. |
+| No descheduler | It would rebalance continuously, but it is one more component to install and run. A cluster start, a drain or an upgrade can all stack the replicas on one node, and `make rebalance` repairs it. |
 | No affinity for Redis and PostgreSQL | A single replica has nothing to spread, and the PostgreSQL disk can follow its pod to any node (no availability zones). |
 | No `nodeAffinity`, taints or tolerations | The cluster has a single pool of identical nodes. |
 
@@ -164,7 +164,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | 2, not 1 | One node per replica: a drain, an upgrade or a node loss keeps every replicated service up. |
 | Enough capacity | At the autoscalers' maximum, everything requested fits on the 2 nodes (section 7). |
 | No cluster autoscaler | The quota leaves no room for a third node. |
-| `make start` and `make stop` | Cost management: the cluster is stopped whenever it is not used. |
+| `make start` and `make stop` | Cost management: the cluster is stopped whenever it is not used. This saves the compute; the registry and the public IPs and disks that stay allocated keep costing. |
 
 ## 11. Probes
 

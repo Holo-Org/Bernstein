@@ -178,7 +178,7 @@ and every node is ready, and spreads the pods over the nodes again (see
 | Target       | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
 | `start`      | Start the AKS cluster and fetch its kubectl credentials            |
-| `stop`       | Stop the AKS cluster, so it no longer uses credits                 |
+| `stop`       | Stop the AKS cluster, to save the cost of its nodes                |
 | `credentials`| Point kubectl to the AKS cluster                                   |
 | `registry`   | Create the registry (if missing) and attach it to the cluster      |
 | `status`     | Show the cluster power state, the application pods and autoscalers |
@@ -449,7 +449,7 @@ the CPU limit), read with `kubectl exec`.
   worker's request also covers the heap the JVM may grow to (it sizes it from the memory limit:
   at most 126Mi with 256Mi), and PostgreSQL's the 128MB of `shared_buffers` once the data
   outgrows them (9.5MB today). Poll's request went from 96Mi to 128Mi after its 97Mi peak.
-- **Memory limits at about twice the peak**: room for spikes, while a leak only gets its own
+- **Memory limits at least twice the peak**: room for spikes, while a leak only gets its own
   container killed (`OOMKilled`, then restarted) instead of starving the node.
 - **CPU requests at the usual usage**: what the scheduler reserves on the node, and the base of
   the autoscalers' target (70 % of 50m). Under load, poll and result use more than their request
@@ -525,5 +525,6 @@ docs/
 
 ## Cost management
 
-Stop the cluster when it is not used: `make stop` (and `make start` to resume). The vCPU quota
-is 6 per region: 2 nodes use 4, which keeps room for the surge node AKS adds during upgrades.
+Stop the cluster when it is not used: `make stop` (and `make start` to resume). This saves the
+compute; the registry and the public IPs and disks that stay allocated keep costing. The vCPU
+quota is 6 per region: 2 nodes use 4, which keeps room for the surge node AKS adds during upgrades.

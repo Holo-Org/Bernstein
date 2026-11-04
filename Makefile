@@ -22,7 +22,7 @@ start: ## Start the AKS cluster (if stopped), fetch its kubectl credentials and 
 	@$(MAKE) --no-print-directory credentials
 	@scripts/rebalance.sh
 
-stop: ## Stop the AKS cluster, so it no longer uses credits
+stop: ## Stop the AKS cluster, to save the cost of its nodes
 	@if [ "$$(az aks show $(AKS) --query powerState.code -o tsv)" = Stopped ]; then \
 	  echo "==> $(AKS_CLUSTER) is already stopped"; \
 	else \
