@@ -8,7 +8,7 @@ NAMESPACE          := bernstein
 AKS := --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop credentials status build-push deploy all addresses watch load rebalance
+.PHONY: help start stop credentials registry status build-push deploy all addresses watch load rebalance
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -31,6 +31,9 @@ stop: ## Stop the AKS cluster, so it no longer uses credits
 
 credentials: ## Point kubectl to the AKS cluster
 	az aks get-credentials $(AKS) --overwrite-existing
+
+registry: ## Create the registry (if missing) and attach it to the cluster
+	AKS_RESOURCE_GROUP=$(AKS_RESOURCE_GROUP) AKS_CLUSTER=$(AKS_CLUSTER) scripts/registry.sh
 
 status: ## Show the cluster power state, the application pods and the autoscalers
 	@state="$$(az aks show $(AKS) --query powerState.code -o tsv)"; \

@@ -15,9 +15,9 @@ one section per evaluation criterion (replicas, restart policies, resource limit
 
 ## Quick start (deploy from scratch on your own cluster)
 
-Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster attached to an Azure
-Container Registry (see [Create the infrastructure](#create-the-infrastructure) to create them).
-The cluster needs:
+Prerequisites: the tools of [Requirements](#requirements), and an AKS cluster (see
+[Create the infrastructure](#create-the-infrastructure) to create one). `make registry` creates
+the private registry it needs. The cluster needs:
 
 - **x86_64 (`amd64`) nodes**: the images are built for `linux/amd64`, an ARM node pool cannot run
   them.
@@ -30,9 +30,10 @@ The cluster needs:
 git clone https://github.com/Holo-Org/Bernstein.git bernstein && cd bernstein
 az login                                    # your Azure account (see Credentials and secrets)
 az account set --subscription <subscription-id>
-cp .env.example .env                        # choose REDIS_PASSWORD and POSTGRES_PASSWORD
+cp .env.example .env                        # choose ACR_NAME, REDIS_PASSWORD and POSTGRES_PASSWORD
 export AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
 make credentials                            # or `make start` if the cluster is stopped
+make registry                               # create the registry and attach it to the cluster
 make all                                    # build and push the images, then deploy
 make addresses                              # poll: http://<ip>, result: http://<ip>
 ```
@@ -46,7 +47,10 @@ make addresses                              # poll: http://<ip>, result: http://
   (`az aks install-cli`, then `kubelogin convert-kubeconfig -l azurecli`).
 - If the cluster is stopped, run `make start` instead of `make credentials`: it starts the
   cluster, then fetches its credentials.
-- If the subscription has several registries, also set `ACR_NAME` in `.env`.
+- `ACR_NAME` must be globally unique if `make registry` creates the registry. It can stay empty
+  when the subscription has exactly one registry, which is then used. Attaching the registry
+  needs `Owner` on it (see [Requirements](#requirements)); skip `make registry` if the cluster is
+  already attached to one.
 - The first deployment takes a few minutes: Azure creates the disk of PostgreSQL and the public
   IPs of poll and result. `make all` waits for every rollout, then prints the addresses.
 - To check a no-downtime update: `make watch` in a terminal, change the sources of poll or
@@ -103,11 +107,11 @@ az aks update --resource-group bernstein-rg --name bernstein-aks --attach-acr <r
   `bash` 4+, `curl` and GNU coreutils (`sha256sum`, `timeout`; `brew install coreutils` on
   macOS). On an ARM machine, building the `linux/amd64` images also needs QEMU emulation
   (included in Docker Desktop).
-- An AKS cluster attached to an ACR (`az aks update --attach-acr <acr>`).
+- An AKS cluster. `make registry` creates the registry if needed and attaches it to the cluster.
 - **Azure permissions**: `Contributor` on the resource group of the cluster and the registry
-  (to push the images, fetch the cluster credentials, start and stop the cluster). Attaching
-  the registry to the cluster (`--attach-acr`) creates a role assignment, so it also needs
-  `Owner` (or `User Access Administrator`) on the registry.
+  (to create the registry, push the images, fetch the cluster credentials, start and stop the
+  cluster). Attaching the registry to the cluster (`make registry`) creates a role assignment,
+  so it also needs `Owner` (or `User Access Administrator`) on the registry.
 
 ## Credentials and secrets
 
@@ -171,6 +175,7 @@ and every node is ready, and spreads the pods over the nodes again (see
 | `start`      | Start the AKS cluster and fetch its kubectl credentials            |
 | `stop`       | Stop the AKS cluster, so it no longer uses credits                 |
 | `credentials`| Point kubectl to the AKS cluster                                   |
+| `registry`   | Create the registry (if missing) and attach it to the cluster      |
 | `status`     | Show the cluster power state, the application pods and autoscalers |
 | `build-push` | Build and push the images (`SERVICES="poll worker"` for a subset)  |
 | `deploy`     | Deploy the application to the cluster                              |
@@ -474,7 +479,7 @@ explicit volumes (e.g. the PostgreSQL data volume and an `emptyDir` for its Unix
 | `error: REDIS_PASSWORD is not set` (or `POSTGRES_PASSWORD`) | Create `.env` from `.env.example`, or export the variable. |
 | `error: <service>:<tag> is not in the registry` | Run `make build-push` (or `make all`) first. |
 | `make deploy` reports `statefulset.apps/postgres` and the `poddisruptionbudget`s as `configured` although nothing changed | Harmless: client-side `kubectl apply` compares with the fields the API server fills in by default. Nothing is updated nor restarted (the `generation` of the objects does not change). |
-| `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`. |
+| `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`, then run `make registry` if it does not exist yet. |
 | `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
 | Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
 | An address shows `<pending>` | Azure is still creating the public IP: run `make addresses` again a minute later. |
@@ -495,6 +500,7 @@ Makefile                  entry points (make help)
 .gitignore                ignores .env and the temporary overlay of deploy.sh
 scripts/
   lib.sh                  shared helpers (.env loading, registry name, image tags)
+  registry.sh             create the registry and attach it to the cluster
   build-push.sh           build and push the images to the registry
   deploy.sh               create the Secrets and apply the manifests
   watch.sh                request the pages continuously during an update
