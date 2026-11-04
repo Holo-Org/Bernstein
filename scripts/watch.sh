@@ -8,7 +8,9 @@
 # Stops after DURATION seconds if set, otherwise on Ctrl-C; exits 1 if any request failed.
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 DURATION="${DURATION:-0}"
 INTERVAL="${INTERVAL:-0.2}" # pause between two rounds of requests
 TIMEOUT=5                   # a request slower than this counts as failed

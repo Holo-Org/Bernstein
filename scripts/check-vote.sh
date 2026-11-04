@@ -9,7 +9,9 @@
 # Exits 1 if the vote is not counted within TIMEOUT seconds (30 by default).
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 TIMEOUT="${TIMEOUT:-30}"
 
 address() {

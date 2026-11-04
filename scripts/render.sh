@@ -26,14 +26,15 @@ cp "$APP_DIR/schema.sql" "$overlay/"
 
 {
   echo "resources: [../k8s]"
+  echo "namespace: $NAMESPACE"
   echo "labels: [{pairs: {app.kubernetes.io/part-of: poll-app}}]"
   # The schema is only applied when the database is created: changing it must not restart PostgreSQL.
   echo "generatorOptions: {disableNameSuffixHash: true}"
   echo "configMapGenerator:"
-  echo "  - {name: postgres-schema, namespace: bernstein, files: [schema.sql]}"
+  echo "  - {name: postgres-schema, files: [schema.sql]}"
   echo "secretGenerator:"
-  echo "  - {name: redis, namespace: bernstein, files: [password=redis-password]}"
-  echo "  - {name: postgres, namespace: bernstein, files: [password=postgres-password]}"
+  echo "  - {name: redis, files: [password=redis-password]}"
+  echo "  - {name: postgres, files: [password=postgres-password]}"
   echo "images:"
   for service in "${SERVICES[@]}"; do
     echo "  - {name: $service, newName: $(image_repository "$service"), newTag: \"$(image_tag "$service")\"}"

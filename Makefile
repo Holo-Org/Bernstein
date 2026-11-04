@@ -3,7 +3,7 @@
 
 AKS_RESOURCE_GROUP ?= bernstein-rg
 AKS_CLUSTER        ?= bernstein-aks
-NAMESPACE          := bernstein
+NAMESPACE          := $(shell sed -n 's/^namespace: //p' k8s/kustomization.yaml)
 
 AKS := --resource-group $(AKS_RESOURCE_GROUP) --name $(AKS_CLUSTER)
 

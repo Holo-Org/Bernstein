@@ -11,8 +11,6 @@ set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
-
 resolve_acr_name
 require_env REDIS_PASSWORD POSTGRES_PASSWORD
 

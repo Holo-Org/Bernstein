@@ -8,7 +8,9 @@
 # CONCURRENCY requests at a time per page, for DURATION seconds; prints the status codes.
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 DURATION="${DURATION:-180}"
 CONCURRENCY="${CONCURRENCY:-20}"
 
