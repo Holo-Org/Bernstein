@@ -2,24 +2,6 @@
 
 The decisions behind the deployment, and the ones we deliberately did not make.
 The README describes how to deploy; this document explains why it is done this way.
-Its sections follow the evaluation criteria of the project:
-
-| Criterion | Section |
-|---|---|
-| Application working | [1. Application](#1-application) |
-| Persistent data | [2. Persistent data](#2-persistent-data) |
-| Private Docker registry | [3. Private registry](#3-private-registry) |
-| No-downtime update | [4. No-downtime update](#4-no-downtime-update) |
-| Replicas | [5. Replicas](#5-replicas) |
-| Restart policies | [6. Restart policies](#6-restart-policies) |
-| Resource limits | [7. Resource requests and limits](#7-resource-requests-and-limits) |
-| Exposed ports | [8. Exposed ports](#8-exposed-ports) |
-| Affinity policies | [9. Scheduling and affinity](#9-scheduling-and-affinity) |
-| Number of nodes | [10. Number of nodes](#10-number-of-nodes) |
-| Probes | [11. Probes](#11-probes) |
-| Load balancers | [12. Load balancers](#12-load-balancers) |
-| Auto-scaling | [13. Auto-scaling](#13-auto-scaling) |
-| Documentation, repository structure | this document, the [README](../README.md), [14. Other choices](#14-other-choices) |
 
 ## 1. Application
 
