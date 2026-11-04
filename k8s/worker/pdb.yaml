@@ -5,6 +5,7 @@ metadata:
 spec:
   # A `kubectl drain` may only evict a worker while another one keeps processing the votes.
   minAvailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       app: worker

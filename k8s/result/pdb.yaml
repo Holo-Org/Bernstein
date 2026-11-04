@@ -5,6 +5,7 @@ metadata:
 spec:
   # A `kubectl drain` may only evict a result pod while another one stays available.
   minAvailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       app: result
