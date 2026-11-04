@@ -56,8 +56,7 @@ spec:
               port: redis
             initialDelaySeconds: 10
             periodSeconds: 10
-          # Measured: 12m and 5Mi idle, 45m and a 9Mi peak at 100 votes per second. Single-threaded
-          # and on the path of every vote: with 250m, it was throttled in bursts.
+          # See docs/records/sizing.md.
           resources:
             requests:
               cpu: 50m
