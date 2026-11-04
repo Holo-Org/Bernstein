@@ -131,7 +131,7 @@ Nothing secret is committed. Two kinds of credentials are needed:
    | `REDIS_PASSWORD` | yes      | Password of the Redis queue, stored in the `redis` Kubernetes Secret.  |
    | `POSTGRES_PASSWORD` | yes   | Password of the PostgreSQL database, stored in the `postgres` Kubernetes Secret. |
 
-   The deploy script creates the Kubernetes Secrets from these variables, so the passwords are
+   The deployment creates the Kubernetes Secrets from these variables, so the passwords are
    neither committed nor in the manifests.
 
    `POSTGRES_PASSWORD` is only applied when the database is created (first start on an empty
@@ -170,6 +170,7 @@ and every node is ready, and spreads the pods over the nodes again.
 | `credentials`| Point kubectl to the AKS cluster                                   |
 | `registry`   | Create the registry (if missing) and attach it to the cluster      |
 | `status`     | Show the cluster power state, the application pods and autoscalers |
+| `test`       | Check what a deployment would apply, without a cluster             |
 | `build-push` | Build and push the images (`SERVICES="poll worker"` for a subset)  |
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
@@ -198,14 +199,16 @@ and every node is ready, and spreads the pods over the nodes again.
 
 1. Checks that the cluster is reachable and that every image is in the registry, before
    touching anything.
-2. Applies the namespace and creates or updates the Secrets.
-3. Applies the manifests of `k8s/` (Kustomize) through a temporary overlay that points each
-   image to the registry with the tag of its current sources. Only the services whose sources
-   changed get a new tag, so only they are rolled out.
-   The overlay also generates the `postgres-schema` ConfigMap from a copy of
-   `poll-application/schema.sql`, as Kustomize only loads the files below the kustomization that
-   names them (to render everything else by hand: `kubectl kustomize k8s`).
+2. Renders the complete manifests with `scripts/render.sh`: `k8s/`, through a temporary overlay
+   that adds the Secrets and the schema, and points each image to the registry with the tag of
+   its current sources. Only the services whose sources changed get a new tag, so only they are
+   rolled out. The overlay holds a copy of `poll-application/schema.sql`, as Kustomize only
+   loads the files below the kustomization that names them.
+3. Applies them in one pass.
 4. Waits for the rollouts and prints the external addresses.
+
+`scripts/render.sh` needs no cluster, so what would be applied can be read beforehand (it
+includes the passwords). `make test` checks it.
 
 ### No-downtime update (`scripts/watch.sh`)
 
@@ -278,10 +281,12 @@ scripts/
   lib.sh                  shared helpers (.env loading, registry name, image tags)
   registry.sh             create the registry and attach it to the cluster
   build-push.sh           build and push the images to the registry
-  deploy.sh               create the Secrets and apply the manifests
+  render.sh               print the complete manifests, Secrets included
+  deploy.sh               check the registry, apply the manifests and wait for the rollouts
   watch.sh                request the pages continuously during an update
   load.sh                 load the pages to make the autoscalers add replicas
   rebalance.sh            spread the replicas over the nodes again (after a start)
+tests/render.sh           check the rendered manifests, without a cluster
 k8s/                      Kustomize manifests, namespace `bernstein`, one directory per component
   kustomization.yaml      namespace, common label, list of the components
   namespace.yaml

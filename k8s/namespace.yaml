@@ -2,7 +2,3 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: bernstein
-  # Also added by k8s/kustomization.yaml: deploy.sh applies this file alone first (for the
-  # Secrets), and both applies must agree, or each `make deploy` reports it as "configured".
-  labels:
-    app.kubernetes.io/part-of: poll-app

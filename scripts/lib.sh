@@ -25,8 +25,8 @@ resolve_acr_name() {
     echo "error: ACR_NAME is not set and the subscription has ${#registries[@]} registries (see README.md)" >&2
     exit 1
   fi
-  ACR_NAME="${registries[0]}"
-  echo "==> Using registry $ACR_NAME"
+  export ACR_NAME="${registries[0]}"
+  echo "==> Using registry $ACR_NAME" >&2
 }
 
 require_env() {
@@ -53,6 +53,14 @@ image_tag() {
   ) | sha256sum | cut -c1-12
 }
 
+image_repository() {
+  echo "$ACR_NAME.azurecr.io/$1"
+}
+
 image_ref() {
-  echo "$ACR_NAME.azurecr.io/$1:$(image_tag "$1")"
+  echo "$(image_repository "$1"):$(image_tag "$1")"
+}
+
+image_in_registry() {
+  az acr manifest show --registry "$ACR_NAME" --name "$1:$(image_tag "$1")" &>/dev/null
 }

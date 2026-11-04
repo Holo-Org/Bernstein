@@ -28,7 +28,7 @@ for service in "${services[@]}"; do
 
   ref="$(image_ref "$service")"
 
-  if [[ "${FORCE:-0}" != 1 ]] && az acr manifest show --registry "$ACR_NAME" --name "$service:${ref##*:}" &>/dev/null; then
+  if [[ "${FORCE:-0}" != 1 ]] && image_in_registry "$service"; then
     echo "==> $ref already in the registry, skipping"
     continue
   fi
