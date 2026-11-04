@@ -261,7 +261,7 @@ a few milliseconds: the application has no acknowledgement mechanism.
 
 | Event | Effect |
 |---|---|
-| A node is drained | Poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). |
+| A node is drained | `kubectl drain` first refuses: it needs `--ignore-daemonsets --delete-emptydir-data`, and it leaves the node cordoned either way. Then poll, result and the worker keep one replica on the other node (PDBs). Redis restarts on the other node (queued votes lost). PostgreSQL restarts there with its disk (short interruption, data kept). The replicas stay stacked on that node until `make rebalance`. |
 | A node is lost | Same as a drain, without the PDBs' protection: the pods are rescheduled once Kubernetes declares the node down (about 5 minutes, the default `not-ready`/`unreachable` toleration). |
 | Redis restarts | Poll is not ready until Redis is back; the votes waiting in the queue are lost. Measured when its configuration changed: back within seconds, before poll's readiness probe failed, so no page error. |
 | The workers stop | Votes wait in Redis. Past 100MB (about a million votes), new votes are refused (HTTP 500) and the queued ones are kept. |

@@ -242,6 +242,19 @@ any request failed. URLs can also be given: `scripts/watch.sh http://<ip>/`.
 Measured on AKS while changing poll's sources and running `make all`: 688 requests on poll and
 687 on result, 0 errors; the new pods took over within the rollout.
 
+### Drain a node
+
+```sh
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+kubectl uncordon <node>
+make rebalance
+```
+
+Both flags are needed: AKS runs DaemonSets on every node, and Poll, Redis and PostgreSQL use
+`emptyDir` volumes, whose content is disposable. Without them, the drain refuses to start and
+leaves the node cordoned, so `kubectl uncordon <node>` is needed either way. `make rebalance` then
+spreads the replicas again, as nothing moves a running pod.
+
 ## Kubernetes resources
 
 Everything lives in the `bernstein` namespace (`k8s/`).
