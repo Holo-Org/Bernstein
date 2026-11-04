@@ -23,7 +23,7 @@ The project is to deploy this exact application: `poll-application/` stays ident
 | Poll and Result reachable from outside | One `LoadBalancer` Service each ([ADR-0009](../adr/0009-give-each-page-its-own-load-balancer.md)) |
 | Deliver everything except the cloud credentials and `POSTGRES_PASSWORD`, and document how to set them | `.env.example`, [README](../../README.md#credentials-and-secrets) |
 | An evaluator with a ready cluster on the same platform can deploy from scratch | [Quick start](../../README.md#quick-start-deploy-from-scratch-on-your-own-cluster); `make registry` provides the registry |
-| On a fresh cluster, a vote reaches the Result page | By hand, on the two pages |
+| On a fresh cluster, a vote reaches the Result page | `make check-vote`, or by hand on the two pages |
 | An update of one application causes no failed request | `make watch` during `make all` ([measurements](measurements.md#no-downtime-updates)) |
 | Decisions made and not made are justified | [Index of the technical choices](../technical-choices.md) |
 | Questions on what would happen, and how to do something | [Failure modes](failure-modes.md) |

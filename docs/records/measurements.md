@@ -57,5 +57,7 @@ Under `make load`, both autoscalers went from 2 to 4 replicas within about 70 s 
 | Redis `maxmemory`, lowered, with the Workers stopped | New votes got an HTTP 500, the 469 queued votes were kept and processed once the Workers were back |
 | Two votes in a row from each of 3000 voters, pushed straight into the queue (local) | With 2 Workers, 35 voters ended on their first vote; with 1 Worker, none |
 | Votes cast one after the other during an update of the Worker (local) | 38 counted by Result, none lost |
+| From an empty namespace to every rollout finished, images already built (local) | 36 s, no restart |
+| A vote from the Poll page to the tally of the Result page (local) | 1.2 s |
 | Cluster start | All 8 pods landed on the first ready node, until the rebalance |
 | PostgreSQL restart | The Workers and Result restarted and reconnected without any action |

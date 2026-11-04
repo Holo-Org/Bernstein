@@ -38,6 +38,7 @@ make credentials                            # or `make start` if the cluster is 
 make registry                               # create the registry and attach it to the cluster
 make all                                    # build and push the images, then deploy
 make addresses                              # poll: http://<ip>, result: http://<ip>
+make check-vote                             # cast a vote and wait for the result page to count it
 ```
 
 - **The Makefile defaults to our cluster** (`bernstein-rg` / `bernstein-aks`): export
@@ -175,6 +176,7 @@ and every node is ready, and spreads the pods over the nodes again.
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
 | `addresses`  | Show the external addresses of the application                     |
+| `check-vote` | Cast a vote and wait for the result page to count it               |
 | `watch`      | Request the pages continuously and count the errors                |
 | `load`       | Load the pages to make the autoscalers add replicas                |
 | `rebalance`  | Spread the replicas over the nodes again (run by `start`)          |
@@ -226,6 +228,12 @@ previous one), prints each failed request (HTTP error or no answer within 5 s) a
 progress line every 5 seconds. It also prints each new poll pod that serves the page, so the
 rollout is visible. On Ctrl-C (or after `DURATION` seconds), it prints the totals and fails if
 any request failed. URLs can also be given: `scripts/watch.sh http://<ip>/`.
+
+`make watch` only requests the pages, so it would not notice a broken Worker.
+`make check-vote` crosses the whole application: it casts a vote on the Poll page, as a new voter,
+and waits for the tally of the Result page to rise, reading it through Socket.IO as the page does.
+It adds one vote each time. URLs can also be given:
+`scripts/check-vote.sh http://<poll>/ http://<result>/`.
 
 ### Autoscaling (`scripts/load.sh`)
 
@@ -283,6 +291,7 @@ scripts/
   build-push.sh           build and push the images to the registry
   render.sh               print the complete manifests, Secrets included
   deploy.sh               check the registry, apply the manifests and wait for the rollouts
+  check-vote.sh           cast a vote and wait for the result page to count it
   watch.sh                request the pages continuously during an update
   load.sh                 load the pages to make the autoscalers add replicas
   rebalance.sh            spread the replicas over the nodes again (after a start)
