@@ -73,6 +73,9 @@ node image) always adds a temporary surge node: the pool uses `maxSurge: 1`.
 - With 3 nodes, the surge node would need 8 vCPUs and the upgrade would fail on the quota.
   A third node therefore requires a quota increase.
 
+AKS documents system node pools as needing 4 vCPUs and excludes the B-series. This cluster runs
+anyway, and the quota could not hold two compliant nodes: a known deviation, accepted here.
+
 During a drain, the 2 Poll, Worker and Result replicas (one per node) and their
 `PodDisruptionBudget`s keep the application available.
 

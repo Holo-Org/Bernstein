@@ -122,7 +122,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | Redis CPU limit from 250m to 500m | Redis was throttled in bursts, while it is single-threaded and on the path of every vote. |
 | Redis `--maxmemory 100mb` (default `noeviction` policy) | If the workers stop, the queue grows: once full (about a million votes), Redis refuses new votes instead of being killed by its memory limit and losing the queued ones. Tested: new votes got an HTTP 500, the 469 queued votes were kept and processed once the workers were back. |
 | Burstable QoS (requests below limits) | `Guaranteed` would reserve the peak at all times, which 2 nodes cannot afford with 4 replicas of poll and result. |
-| It fits | At the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of memory out of 3.8 CPUs and 11Gi allocatable (1.9 CPUs requested in total with the AKS system pods). |
+| It fits | At the autoscalers' maximum, the application requests 650m of CPU and 1.3Gi of memory out of 3.8 CPUs and 11Gi allocatable (1.9 CPUs requested in total with the AKS system pods). The 3.8 CPUs are burst capacity: a `Standard_B2s_v2` guarantees 40 %, about 1.6 vCPUs for the pool, which is enough for a demonstration but not for a sustained load. |
 
 ## 8. Exposed ports
 
@@ -160,7 +160,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 
 | Choice | Why |
 |---|---|
-| 2 × `Standard_B2s_v2` (2 vCPUs, 8 GiB each) | The quota is 6 vCPUs per region. A system node pool keeps `maxUnavailable: 0`, so an AKS upgrade adds a surge node (`maxSurge: 1`) before draining an old one: 2 nodes plus the surge node use 6 vCPUs; 3 nodes would need 8 and the upgrade would fail. |
+| 2 × `Standard_B2s_v2` (2 vCPUs, 8 GiB each) | The quota is 6 vCPUs per region. A system node pool keeps `maxUnavailable: 0`, so an AKS upgrade adds a surge node (`maxSurge: 1`) before draining an old one: 2 nodes plus the surge node use 6 vCPUs; 3 nodes would need 8 and the upgrade would fail. **Known deviation**: AKS documents system node pools as needing 4 vCPUs and excludes the B-series. This cluster runs anyway, and the quota could not hold two compliant nodes. |
 | 2, not 1 | One node per replica: a drain, an upgrade or a node loss keeps every replicated service up. |
 | Enough capacity | At the autoscalers' maximum, everything requested fits on the 2 nodes (section 7). |
 | No cluster autoscaler | The quota leaves no room for a third node. |
