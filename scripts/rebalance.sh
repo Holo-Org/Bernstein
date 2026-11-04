@@ -9,7 +9,8 @@
 # (with a no-downtime rollout) every Deployment whose replicas share fewer nodes than they could.
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Right after a start, the DNS name of the API server only resolves some of the time, for a
 # few minutes: wait until it answers several times in a row.

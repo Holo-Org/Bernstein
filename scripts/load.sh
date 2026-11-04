@@ -8,18 +8,16 @@
 # CONCURRENCY requests at a time per page, for DURATION seconds; prints the status codes.
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 DURATION="${DURATION:-180}"
 CONCURRENCY="${CONCURRENCY:-20}"
 
 urls=("$@")
 if [[ ${#urls[@]} -eq 0 ]]; then
-  while read -r name ip; do
-    [[ -n "$ip" ]] || { echo "error: service $name has no external IP yet" >&2; exit 1; }
-    urls+=("http://$ip/")
-  done < <(kubectl get services --namespace "$NAMESPACE" \
-    -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name} {.status.loadBalancer.ingress[0].ip}{"\n"}{end}')
-  [[ ${#urls[@]} -gt 0 ]] || { echo "error: no LoadBalancer service in namespace $NAMESPACE" >&2; exit 1; }
+  pages="$("$ROOT_DIR/scripts/pages.sh")"
+  mapfile -t urls < <(cut -d' ' -f2 <<<"$pages")
 fi
 
 load() {

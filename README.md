@@ -37,7 +37,7 @@ export AKS_RESOURCE_GROUP=<your-resource-group> AKS_CLUSTER=<your-cluster>
 make credentials                            # or `make start` if the cluster is stopped
 make registry                               # create the registry and attach it to the cluster
 make all                                    # build and push the images, then deploy
-make addresses                              # poll: http://<ip>, result: http://<ip>
+make addresses                              # poll http://<ip>/, result http://<ip>/
 make check-vote                             # cast a vote and wait for the result page to count it
 ```
 
@@ -171,7 +171,7 @@ and every node is ready, and spreads the pods over the nodes again.
 | `credentials`| Point kubectl to the AKS cluster                                   |
 | `registry`   | Create the registry (if missing) and attach it to the cluster      |
 | `status`     | Show the cluster power state, the application pods and autoscalers |
-| `test`       | Check what a deployment would apply, without a cluster             |
+| `test`       | Check the scripts, without a cluster                               |
 | `build-push` | Build and push the images (`SERVICES="poll worker"` for a subset)  |
 | `deploy`     | Deploy the application to the cluster                              |
 | `all`        | `build-push` then `deploy`                                         |
@@ -268,7 +268,7 @@ spreads the replicas again, as nothing moves a running pod. See
 | `error: ACR_NAME is not set and the subscription has N registries` | Set `ACR_NAME` in `.env`, then run `make registry` if it does not exist yet. |
 | `error: the cluster of kubectl context '...' is unreachable` | The cluster is stopped (`make start`) or `kubectl` points to another one (`make credentials`). |
 | Pods in `ImagePullBackOff` with `401 Unauthorized` | The cluster lost its `AcrPull` role on the registry: `az aks update --attach-acr <registry>` (see [Create the infrastructure](#create-the-infrastructure)). |
-| An address shows `<pending>` | Azure is still creating the public IP: run `make addresses` again a minute later. |
+| `error: no address yet for <service>` | Azure is still creating the public IP: run `make addresses` again a minute later. |
 | Worker and result not ready, `password authentication failed` in their logs (`kubectl logs -n bernstein deploy/worker`), after `POSTGRES_PASSWORD` changed | The password is only set when the database is created. Use the original one, or run `ALTER USER poll PASSWORD '...'` in the database (or delete the namespace to start over, which deletes the votes). |
 
 To start over from an empty cluster (this **deletes the votes**, with the PostgreSQL disk):
@@ -291,11 +291,14 @@ scripts/
   build-push.sh           build and push the images to the registry
   render.sh               print the complete manifests, Secrets included
   deploy.sh               check the registry, apply the manifests and wait for the rollouts
+  pages.sh                print the public pages, once they have an address
   check-vote.sh           cast a vote and wait for the result page to count it
   watch.sh                request the pages continuously during an update
   load.sh                 load the pages to make the autoscalers add replicas
   rebalance.sh            spread the replicas over the nodes again (after a start)
-tests/render.sh           check the rendered manifests, without a cluster
+tests/
+  render.sh               check the rendered manifests, without a cluster
+  pages.sh                check how the public pages are found, with a stand-in for kubectl
 k8s/                      Kustomize manifests, namespace `bernstein`, one directory per component
   kustomization.yaml      namespace, common label, list of the components
   namespace.yaml

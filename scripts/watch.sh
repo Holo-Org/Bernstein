@@ -8,7 +8,9 @@
 # Stops after DURATION seconds if set, otherwise on Ctrl-C; exits 1 if any request failed.
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 DURATION="${DURATION:-0}"
 INTERVAL="${INTERVAL:-0.2}" # pause between two rounds of requests
 TIMEOUT=5                   # a request slower than this counts as failed
@@ -18,12 +20,8 @@ declare -A urls ok errors pods
 if [[ $# -gt 0 ]]; then
   for url in "$@"; do urls[$url]="$url"; done
 else
-  while read -r name ip; do
-    [[ -n "$ip" ]] || { echo "error: service $name has no external IP yet" >&2; exit 1; }
-    urls[$name]="http://$ip/"
-  done < <(kubectl get services --namespace "$NAMESPACE" \
-    -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name} {.status.loadBalancer.ingress[0].ip}{"\n"}{end}')
-  [[ ${#urls[@]} -gt 0 ]] || { echo "error: no LoadBalancer service in namespace $NAMESPACE" >&2; exit 1; }
+  pages="$("$ROOT_DIR/scripts/pages.sh")"
+  while read -r name url; do urls[$name]="$url"; done <<<"$pages"
 fi
 mapfile -t names < <(printf '%s\n' "${!urls[@]}" | sort)
 for name in "${names[@]}"; do

@@ -9,17 +9,17 @@
 # Exits 1 if the vote is not counted within TIMEOUT seconds (30 by default).
 set -euo pipefail
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
-TIMEOUT="${TIMEOUT:-30}"
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-address() {
-  kubectl get service "$1" --namespace "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-}
+TIMEOUT="${TIMEOUT:-30}"
 
 if [[ $# -eq 2 ]]; then
   poll="$1" result="$2"
 else
-  poll="http://$(address poll)/" result="http://$(address result)/"
+  pages="$("$ROOT_DIR/scripts/pages.sh")"
+  poll="$(sed -n 's/^poll //p' <<<"$pages")"
+  result="$(sed -n 's/^result //p' <<<"$pages")"
 fi
 
 socket="${result%/}/socket.io/?EIO=4&transport=polling"

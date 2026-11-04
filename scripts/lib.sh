@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/poll-application"
 # shellcheck disable=SC2034 # used by the scripts that source this file
 SERVICES=(poll worker result)
+# shellcheck disable=SC2034 # used by the scripts that source this file
+NAMESPACE="$(sed -n 's/^namespace: //p' "$ROOT_DIR/k8s/kustomization.yaml")"
 
 # Local settings (ACR_NAME, POSTGRES_PASSWORD...), never committed: see .env.example.
 # Variables already set in the environment take precedence over the file.
