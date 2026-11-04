@@ -40,8 +40,9 @@ status: ## Show the cluster power state, the application pods and the autoscaler
 	echo "==> $(AKS_CLUSTER): $$state"; \
 	if [ "$$state" = Running ]; then kubectl get pods,services,hpa --namespace $(NAMESPACE) --request-timeout=10s; fi
 
-test: ## Check what a deployment would apply, without a cluster
+test: ## Check the scripts, without a cluster
 	@tests/render.sh
+	@tests/pages.sh
 
 build-push: ## Build and push the images (only some of them with SERVICES="poll worker")
 	scripts/build-push.sh $(SERVICES)
@@ -52,8 +53,7 @@ deploy: ## Deploy the application to the cluster
 all: build-push deploy ## Build, push and deploy
 
 addresses: ## Show the external addresses of the application
-	@kubectl get services --namespace $(NAMESPACE) \
-	  -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name}: http://{.status.loadBalancer.ingress[0].ip}{"\n"}{end}'
+	@scripts/pages.sh
 
 check-vote: ## Cast a vote and wait for the result page to count it
 	@scripts/check-vote.sh

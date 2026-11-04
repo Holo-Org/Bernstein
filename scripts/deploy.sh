@@ -36,13 +36,4 @@ for workload in $(kubectl get deployments,statefulsets --namespace "$NAMESPACE" 
 done
 
 echo "==> External addresses"
-for service in $(kubectl get services --namespace "$NAMESPACE" --output name); do
-  [[ "$(kubectl get "$service" --namespace "$NAMESPACE" -o jsonpath='{.spec.type}')" == LoadBalancer ]] || continue
-  # Azure takes a moment to assign the public IP of a new LoadBalancer.
-  for _ in {1..30}; do
-    ip="$(kubectl get "$service" --namespace "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
-    [[ -n "$ip" ]] && break
-    sleep 5
-  done
-  echo "${service#service/}: http://${ip:-<pending>}"
-done
+"$ROOT_DIR/scripts/pages.sh"

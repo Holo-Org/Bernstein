@@ -14,14 +14,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TIMEOUT="${TIMEOUT:-30}"
 
-address() {
-  kubectl get service "$1" --namespace "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-}
-
 if [[ $# -eq 2 ]]; then
   poll="$1" result="$2"
 else
-  poll="http://$(address poll)/" result="http://$(address result)/"
+  pages="$("$ROOT_DIR/scripts/pages.sh")"
+  poll="$(sed -n 's/^poll //p' <<<"$pages")"
+  result="$(sed -n 's/^result //p' <<<"$pages")"
 fi
 
 socket="${result%/}/socket.io/?EIO=4&transport=polling"

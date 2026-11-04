@@ -5,24 +5,13 @@
 # Usage: tests/render.sh
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck source=tests/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 export ACR_NAME=test-registry
 export REDIS_PASSWORD='redis "pass" word'
 export POSTGRES_PASSWORD=postgres-password
 export KUBECONFIG=/dev/null
-
-failures=0
-check() {
-  local name="$1"
-  shift
-  if "$@"; then
-    echo "ok    $name"
-  else
-    echo "FAIL  $name"
-    failures=$((failures + 1))
-  fi
-}
 
 rendered="$("$root/scripts/render.sh")"
 

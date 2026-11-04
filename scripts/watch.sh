@@ -20,12 +20,8 @@ declare -A urls ok errors pods
 if [[ $# -gt 0 ]]; then
   for url in "$@"; do urls[$url]="$url"; done
 else
-  while read -r name ip; do
-    [[ -n "$ip" ]] || { echo "error: service $name has no external IP yet" >&2; exit 1; }
-    urls[$name]="http://$ip/"
-  done < <(kubectl get services --namespace "$NAMESPACE" \
-    -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name} {.status.loadBalancer.ingress[0].ip}{"\n"}{end}')
-  [[ ${#urls[@]} -gt 0 ]] || { echo "error: no LoadBalancer service in namespace $NAMESPACE" >&2; exit 1; }
+  pages="$("$ROOT_DIR/scripts/pages.sh")"
+  while read -r name url; do urls[$name]="$url"; done <<<"$pages"
 fi
 mapfile -t names < <(printf '%s\n' "${!urls[@]}" | sort)
 for name in "${names[@]}"; do
