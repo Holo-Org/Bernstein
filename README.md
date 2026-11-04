@@ -91,7 +91,13 @@ az aks create --resource-group bernstein-rg --name bernstein-aks --tier free \
   --attach-acr <registry> --generate-ssh-keys
 az aks nodepool update --resource-group bernstein-rg --cluster-name bernstein-aks \
   --name nodepool1 --max-surge 1
+az aks maintenanceconfiguration add --resource-group bernstein-rg --cluster-name bernstein-aks \
+  --name aksManagedNodeOSUpgradeSchedule --schedule-type Weekly --day-of-week Sunday \
+  --interval-weeks 1 --duration 4 --utc-offset +01:00 --start-time 02:00
 ```
+
+The `NodeImage` channel replaces the nodes every week, which drains them. The maintenance window
+keeps this to Sunday night, best effort, instead of whenever a new image reaches the region.
 
 `--attach-acr` gives the cluster nodes the `AcrPull` role on the registry. To check it, or to
 restore it on an existing cluster:

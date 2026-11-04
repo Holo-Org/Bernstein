@@ -236,6 +236,7 @@ a vote load (about 100 votes per second). Peaks from the containers' cgroup (`me
 | AKS (managed Kubernetes) | Recommended by the subject, and covered by the Azure for Students credits. Azure runs the control plane: nothing to install or maintain ourselves. |
 | Region `denmarkeast` | The subscription policy only allows 5 regions, and this is the only one offering B-series VMs for AKS. |
 | AKS Free tier | No cost for the control plane. The trade-off is no SLA, acceptable for this project. |
+| Node image updates on Sunday night (`aksManagedNodeOSUpgradeSchedule`) | The `NodeImage` channel is weekly and drains the nodes. Without a maintenance window it can start at any time, including during a demonstration; AKS treats the window as best effort. |
 
 **Deployment method**
 
