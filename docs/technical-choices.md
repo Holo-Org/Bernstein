@@ -50,7 +50,7 @@ All the components are deployed in the `bernstein` namespace, from the manifests
 | 1 GiB PVC (Azure disk, `default` StorageClass), kept (`persistentVolumeClaimRetentionPolicy: Retain`) | The subject requires persistent votes. The disk survives the deletion of the pod and of the StatefulSet. |
 | Volume mounted on `/var/lib/postgresql` | The new layout of the `postgres:18` image (`PGDATA` is `/var/lib/postgresql/18/docker`). |
 | `schema.sql` applied on startup, from a ConfigMap mounted in `/docker-entrypoint-initdb.d` | The schema is applied automatically, once, when the database is created. This ConfigMap has no hash suffix, so changing the schema does not restart the database for nothing. |
-| `--load-restrictor LoadRestrictionsNone` | Reads `schema.sql` straight from the application sources, rather than keeping a copy that could drift. |
+| `schema.sql` copied into the temporary overlay of `deploy.sh` | Kustomize only loads the files below the kustomization that names them. The copy lives for the time of the build, so it cannot drift from the application sources, and the build needs no `--load-restrictor` flag. |
 | An update means a short interruption | Voting is not affected (votes wait in Redis, and the worker puts the current vote back). The result page is unavailable for a few seconds. |
 | No Redis persistence | Redis is only a transit queue, emptied continuously by the worker: the votes are persisted in PostgreSQL. **Accepted consequence**: the votes waiting in the queue are lost if Redis restarts. |
 

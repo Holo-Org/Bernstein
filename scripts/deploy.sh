@@ -11,7 +11,7 @@ set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-NAMESPACE=bernstein # must match k8s/kustomization.yaml
+NAMESPACE=bernstein # must match kustomization.yaml
 
 resolve_acr_name
 require_env REDIS_PASSWORD POSTGRES_PASSWORD
@@ -44,8 +44,15 @@ kubectl create secret generic postgres --namespace "$NAMESPACE" \
 # stay untouched. It lives in the repository because kustomize refuses absolute base paths.
 overlay="$(mktemp -d "$ROOT_DIR/.deploy.XXXXXX")"
 trap 'rm -rf "$overlay"' EXIT
+# Kustomize only loads the files below the kustomization that names them.
+cp "$APP_DIR/schema.sql" "$overlay/"
 {
   echo "resources: [../k8s]"
+  echo "labels: [{pairs: {app.kubernetes.io/part-of: poll-app}}]"
+  # The schema is only applied when the database is created: changing it must not restart PostgreSQL.
+  echo "generatorOptions: {disableNameSuffixHash: true}"
+  echo "configMapGenerator:"
+  echo "  - {name: postgres-schema, namespace: $NAMESPACE, files: [schema.sql]}"
   echo "images:"
   for service in "${SERVICES[@]}"; do
     echo "  - {name: $service, newName: $ACR_NAME.azurecr.io/$service, newTag: \"$(image_tag "$service")\"}"
@@ -53,8 +60,7 @@ trap 'rm -rf "$overlay"' EXIT
 } > "$overlay/kustomization.yaml"
 
 echo "==> Applying the manifests"
-# k8s/postgres reads schema.sql from the application sources, outside the kustomization.
-kubectl kustomize --load-restrictor LoadRestrictionsNone "$overlay" | kubectl apply -f -
+kubectl kustomize "$overlay" | kubectl apply -f -
 
 echo "==> Waiting for the rollouts"
 for workload in $(kubectl get deployments,statefulsets --namespace "$NAMESPACE" --output name); do

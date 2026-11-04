@@ -204,9 +204,9 @@ and every node is ready, and spreads the pods over the nodes again (see
 3. Applies the manifests of `k8s/` (Kustomize) through a temporary overlay that points each
    image to the registry with the tag of its current sources. Only the services whose sources
    changed get a new tag, so only they are rolled out.
-   The build uses `--load-restrictor LoadRestrictionsNone`, because `k8s/postgres` reads
-   `poll-application/schema.sql` outside its directory (to render the manifests by hand:
-   `kubectl kustomize --load-restrictor LoadRestrictionsNone k8s`).
+   The overlay also generates the `postgres-schema` ConfigMap from a copy of
+   `poll-application/schema.sql`, as Kustomize only loads the files below the kustomization that
+   names them (to render everything else by hand: `kubectl kustomize k8s`).
 4. Waits for the rollouts and prints the external addresses.
 
 ### No-downtime update (`scripts/watch.sh`)
@@ -303,8 +303,8 @@ Everything lives in the `bernstein` namespace (`k8s/`).
   mounted on `/var/lib/postgresql`. Since PostgreSQL 18, the image stores its data in
   `/var/lib/postgresql/18/docker` (`PGDATA`) and the volume is mounted on the parent directory.
 - **Schema**: `poll-application/schema.sql` is turned into the `postgres-schema` ConfigMap by
-  Kustomize (no copy) and mounted in `/docker-entrypoint-initdb.d`: the image applies it when it
-  creates the database, i.e. only on an empty volume.
+  the overlay of `deploy.sh` and mounted in `/docker-entrypoint-initdb.d`: the image applies it
+  when it creates the database, i.e. only on an empty volume.
 - **Configuration**: the `postgres` ConfigMap holds the connection settings shared with the
   worker and result (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`); the
   password comes from the `postgres` Secret (key `password`).
