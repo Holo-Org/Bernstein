@@ -251,7 +251,10 @@ a few milliseconds: the application has no acknowledgement mechanism.
 | PostgreSQL high availability | An operator or a managed service (Azure Database for PostgreSQL) would be the production answer, but it is out of proportion here and costs credits. |
 | Helm, CI/CD | The scripts and Kustomize are enough: clone the repository, fill in `.env`, run `make all`. |
 | Skaffold | Its `inputDigest` tagger and Kustomize deployer would replace `build-push.sh` and `deploy.sh`, but not the Secrets, `watch`, `load` nor `rebalance`: one more tool to install for the same result. |
-| NetworkPolicies, monitoring | Not done. |
+| NetworkPolicies | The cluster was created without a network policy engine (`--network-policy`), so the objects would not be enforced. Redis and PostgreSQL stay inside the cluster behind a password, and this namespace only runs this application. With other workloads around it, the next step would be an engine and one policy per backing store. |
+| Monitoring stack | `kubectl top`, `kubectl logs` and the cgroup readings of section 7 were enough to size the pods and follow the updates. Azure Monitor costs credits, and a Prometheus stack would be more to run than the application itself. |
+| Backups of the votes | They are demonstration data on one 1 GiB disk, which survives the pod and the StatefulSet but not the namespace (section 2). `kubectl exec --namespace bernstein postgres-0 -- pg_dump --username poll poll` is enough before a risky change. |
+| Schema migrations | `schema.sql` is only applied when the database is created (section 2), and the application has a single table. |
 | Availability zones | Not enabled on the node pool, which is also what lets the PostgreSQL disk follow its pod to any node. |
 
 ## What happens if...
