@@ -30,7 +30,7 @@ What every pod of the namespace runs with, and what is left out.
 
 ## Passwords
 
-They are not in git nor in the manifests, and `deploy.sh` keeps them off its command lines. Redis does receive its password as an argument (`--requirepass $(REDIS_PASSWORD)`): the kubelet expands it when it starts the container, so it stays visible in the container's configuration on the node.
+They are not in git nor in the manifests, and the scripts keep them off their command lines. `scripts/render.sh` writes them to a private temporary directory for the time of the build, as `.env` already holds them in clear on the same machine. Redis does receive its password as an argument (`--requirepass $(REDIS_PASSWORD)`): the kubelet expands it when it starts the container, so it stays visible in the container's configuration on the node.
 
 ## Known gaps
 
